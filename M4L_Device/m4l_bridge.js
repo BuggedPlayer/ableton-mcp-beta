@@ -61,6 +61,10 @@ function anything() {
             handleSetHiddenParam(args);
             break;
 
+        case "batch_set_hidden_params":
+            handleBatchSetHiddenParams(args);
+            break;
+
         default:
             post("AbletonMCP Beta Bridge: unknown command: '" + cmd + "' (raw: '" + addr + "')\n");
             break;
@@ -126,6 +130,88 @@ function handleSetHiddenParam(args) {
     sendResult(result, requestId);
 }
 
+function handleBatchSetHiddenParams(args) {
+    // args: [track_index (int), device_index (int), params_json_b64 (string), request_id (string)]
+    if (args.length < 4) {
+        sendError("batch_set_hidden_params requires track_index, device_index, params_json_b64, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var paramsB64 = args[2].toString();
+    var requestId = args[3].toString();
+
+    // Decode the base64-encoded JSON parameter array
+    var paramsJson;
+    try {
+        paramsJson = _base64decode(paramsB64);
+    } catch (e) {
+        sendError("Failed to decode params_json_b64: " + e.toString(), requestId);
+        return;
+    }
+
+    var paramsList;
+    try {
+        paramsList = JSON.parse(paramsJson);
+    } catch (e) {
+        sendError("Failed to parse params JSON: " + e.toString(), requestId);
+        return;
+    }
+
+    if (!paramsList || !paramsList.length) {
+        sendError("params list is empty", requestId);
+        return;
+    }
+
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    var deviceApi  = new LiveAPI(null, devicePath);
+
+    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
+        sendError("No device found at track " + trackIdx + " device " + deviceIdx, requestId);
+        return;
+    }
+
+    var results = [];
+    var errorCount = 0;
+
+    for (var i = 0; i < paramsList.length; i++) {
+        var paramIdx = parseInt(paramsList[i].index);
+        var value    = parseFloat(paramsList[i].value);
+
+        var paramPath = devicePath + " parameters " + paramIdx;
+        var paramApi  = new LiveAPI(null, paramPath);
+
+        if (!paramApi || !paramApi.id || parseInt(paramApi.id) === 0) {
+            results.push({ index: paramIdx, error: "not found" });
+            errorCount++;
+            continue;
+        }
+
+        try {
+            var minVal  = parseFloat(paramApi.get("min"));
+            var maxVal  = parseFloat(paramApi.get("max"));
+            var clamped = Math.max(minVal, Math.min(maxVal, value));
+            paramApi.set("value", clamped);
+
+            results.push({
+                index: paramIdx,
+                name: paramApi.get("name").toString(),
+                actual_value: parseFloat(paramApi.get("value"))
+            });
+        } catch (e) {
+            results.push({ index: paramIdx, error: e.toString() });
+            errorCount++;
+        }
+    }
+
+    sendResult({
+        params_set: results.length - errorCount,
+        params_failed: errorCount,
+        total_requested: paramsList.length,
+        results: results
+    }, requestId);
+}
+
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
@@ -176,6 +262,27 @@ function _base64encode(str) {
         result += _b64chars.charAt((triplet >> 12) & 63);
         result += (i - 1 > str.length) ? "=" : _b64chars.charAt((triplet >> 6) & 63);
         result += (i > str.length) ? "=" : _b64chars.charAt(triplet & 63);
+    }
+    return result;
+}
+
+function _base64decode(str) {
+    var lookup = {};
+    for (var c = 0; c < _b64chars.length; c++) {
+        lookup[_b64chars.charAt(c)] = c;
+    }
+    str = str.replace(/=/g, "");
+    var result = "";
+    var i = 0;
+    while (i < str.length) {
+        var b0 = lookup[str.charAt(i++)] || 0;
+        var b1 = lookup[str.charAt(i++)] || 0;
+        var b2 = lookup[str.charAt(i++)] || 0;
+        var b3 = lookup[str.charAt(i++)] || 0;
+        var triplet = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
+        result += String.fromCharCode((triplet >> 16) & 255);
+        if (i - 2 <= str.length) result += String.fromCharCode((triplet >> 8) & 255);
+        if (i - 1 <= str.length) result += String.fromCharCode(triplet & 255);
     }
     return result;
 }
