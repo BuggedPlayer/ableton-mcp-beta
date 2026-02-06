@@ -373,12 +373,20 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             logger.warning(f"Could not connect to Ableton on startup: {str(e)}")
             logger.warning("Make sure the Ableton Remote Script is running")
 
-        # Auto-connect M4L bridge after Ableton connects
-        try:
-            m4l = get_m4l_connection()
-            logger.info("M4L bridge connected on startup")
-        except Exception as e:
-            logger.info(f"M4L bridge not available on startup: {str(e)}")
+        # Auto-connect M4L bridge with retries (device may need time to init)
+        m4l_connected = False
+        for m4l_attempt in range(1, 6):
+            try:
+                m4l = get_m4l_connection()
+                logger.info("M4L bridge connected on startup")
+                m4l_connected = True
+                break
+            except Exception as e:
+                logger.info(f"M4L bridge attempt {m4l_attempt}/5: {str(e)}")
+                if m4l_attempt < 5:
+                    time.sleep(2)
+        if not m4l_connected:
+            logger.warning("M4L bridge not available — will retry when needed")
 
         # Start web dashboard on background thread
         try:
@@ -450,7 +458,7 @@ logging.getLogger().addHandler(_dashboard_log_handler)
 
 # M4L ping cache (avoids 5s UDP timeout on every dashboard refresh)
 _m4l_ping_cache = {"result": False, "timestamp": 0.0}
-_M4L_PING_CACHE_TTL = 10.0
+_M4L_PING_CACHE_TTL = 5.0
 
 
 # ---------------------------------------------------------------------------
