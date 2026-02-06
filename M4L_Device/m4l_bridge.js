@@ -10,7 +10,7 @@
  *   - Responses are base64-encoded JSON sent back via outlet → udpsend
  *
  * The Max patch needs:
- *   [udpreceive 9878] → [js m4l_bridge.js] → [udpsend localhost 9879]
+ *   [udpreceive 9878] → [js m4l_bridge.js] → [udpsend 127.0.0.1 9879]
  */
 
 // Max [js] object configuration

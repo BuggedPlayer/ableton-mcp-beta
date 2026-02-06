@@ -50,7 +50,7 @@ The `.amxd` device must be built manually in Ableton's Max editor since it canno
         |
    [js m4l_bridge.js]
         |
-   [udpsend localhost 9879]
+   [udpsend 127.0.0.1 9879]
    ```
 
    To add each object: press **N** to create a new object, type the text (e.g., `udpreceive 9878`), then press Enter. Connect them top-to-bottom with patch cables.
