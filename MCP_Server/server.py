@@ -375,29 +375,46 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 
         # Auto-connect M4L bridge in background (device may need time to init)
         def _m4l_auto_connect():
-            """Background thread: retry M4L bridge connection until it works."""
+            """Background thread: create UDP sockets once, retry ping until M4L responds."""
             global _m4l_connection
-            for attempt in range(1, 16):  # 15 attempts over ~30s
-                try:
-                    # Set up sockets if needed
-                    if _m4l_connection is None or not _m4l_connection._connected:
-                        _m4l_connection = M4LConnection()
-                        if not _m4l_connection.connect():
-                            logger.info(f"M4L auto-connect {attempt}/15: socket bind failed")
-                            _m4l_connection = None
-                            time.sleep(2)
-                            continue
 
-                    # Try a quick ping with short timeout
-                    _m4l_connection.recv_sock.settimeout(2.0)
-                    if _m4l_connection.ping():
+            # Create sockets once — don't tear them down between retries
+            conn = M4LConnection()
+            if not conn.connect():
+                logger.warning("M4L auto-connect: could not bind UDP sockets")
+                return
+
+            _m4l_connection = conn
+
+            # Build a raw OSC ping packet
+            ping_id = "autocon"
+            ping_osc = M4LConnection._build_osc_message("/ping", [("s", ping_id)])
+
+            for attempt in range(1, 16):  # 15 attempts, ~2s apart
+                try:
+                    # Drain stale data
+                    conn.recv_sock.setblocking(False)
+                    try:
+                        while True:
+                            conn.recv_sock.recvfrom(65535)
+                    except (BlockingIOError, OSError):
+                        pass
+                    conn.recv_sock.setblocking(True)
+                    conn.recv_sock.settimeout(2.0)
+
+                    # Send ping
+                    conn.send_sock.sendto(ping_osc, (conn.send_host, conn.send_port))
+
+                    # Wait for response
+                    data, _ = conn.recv_sock.recvfrom(65535)
+                    result = conn._parse_m4l_response(data)
+                    if result.get("status") == "success":
                         logger.info(f"M4L bridge auto-connected on attempt {attempt}")
-                        # Prime the dashboard cache
                         _m4l_ping_cache["result"] = True
                         _m4l_ping_cache["timestamp"] = time.time()
                         return
-                    else:
-                        logger.info(f"M4L auto-connect {attempt}/15: ping failed, retrying...")
+                except socket.timeout:
+                    logger.info(f"M4L auto-connect {attempt}/15: no response, retrying...")
                 except Exception as e:
                     logger.info(f"M4L auto-connect {attempt}/15: {str(e)}")
                 time.sleep(2)
