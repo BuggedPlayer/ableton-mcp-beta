@@ -356,22 +356,26 @@ function setHiddenParam(trackIdx, deviceIdx, paramIdx, value) {
         return { error: "No parameter found at index " + paramIdx + "." };
     }
 
-    var paramName = paramApi.get("name").toString();
-    var minVal    = parseFloat(paramApi.get("min"));
-    var maxVal    = parseFloat(paramApi.get("max"));
+    try {
+        var paramName = paramApi.get("name").toString();
+        var minVal    = parseFloat(paramApi.get("min"));
+        var maxVal    = parseFloat(paramApi.get("max"));
 
-    var clamped = Math.max(minVal, Math.min(maxVal, value));
-    paramApi.set("value", clamped);
+        var clamped = Math.max(minVal, Math.min(maxVal, value));
+        paramApi.set("value", clamped);
 
-    var actualValue = parseFloat(paramApi.get("value"));
+        var actualValue = parseFloat(paramApi.get("value"));
 
-    return {
-        parameter_name:  paramName,
-        parameter_index: paramIdx,
-        requested_value: value,
-        actual_value:    actualValue,
-        was_clamped:     (clamped !== value)
-    };
+        return {
+            parameter_name:  paramName,
+            parameter_index: paramIdx,
+            requested_value: value,
+            actual_value:    actualValue,
+            was_clamped:     (clamped !== value)
+        };
+    } catch (e) {
+        return { error: "Failed to set parameter " + paramIdx + ": " + e.toString() };
+    }
 }
 
 // ---------------------------------------------------------------------------

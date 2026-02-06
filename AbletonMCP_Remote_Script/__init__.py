@@ -58,26 +58,34 @@ class AbletonMCP(ControlSurface):
         # Close all client sockets so their threads can exit
         for sock in self.client_sockets[:]:
             try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except (OSError, socket.error):
+                pass
+            try:
                 sock.close()
-            except Exception:
+            except (OSError, socket.error):
                 pass
         self.client_sockets = []
 
         # Stop the server
         if self.server:
             try:
+                self.server.shutdown(socket.SHUT_RDWR)
+            except (OSError, socket.error):
+                pass
+            try:
                 self.server.close()
-            except Exception:
+            except (OSError, socket.error):
                 pass
 
         # Wait for the server thread to exit
         if self.server_thread and self.server_thread.is_alive():
-            self.server_thread.join(1.0)
+            self.server_thread.join(3.0)
 
         # Wait briefly for client threads to exit
         for client_thread in self.client_threads[:]:
             if client_thread.is_alive():
-                client_thread.join(1.0)
+                client_thread.join(3.0)
         
         ControlSurface.disconnect(self)
         self.log_message("AbletonMCP Beta disconnected")
@@ -162,8 +170,8 @@ class AbletonMCP(ControlSurface):
                         self.log_message("Client disconnected")
                         break
 
-                    # Accumulate data in buffer
-                    buffer += data.decode('utf-8')
+                    # Accumulate data in buffer (replace invalid UTF-8 instead of crashing)
+                    buffer += data.decode('utf-8', errors='replace')
 
                     # Process all complete newline-delimited messages in the buffer
                     while '\n' in buffer:
@@ -187,10 +195,15 @@ class AbletonMCP(ControlSurface):
                         response_str = json.dumps(response) + '\n'
                         client.sendall(response_str.encode('utf-8'))
 
-                    # If buffer is very large without a newline, it's likely garbage — clear it
+                    # If buffer is very large without a newline, notify client and disconnect
                     if len(buffer) > 1048576:  # 1MB safety limit
-                        self.log_message("Buffer overflow, clearing")
-                        buffer = ''
+                        self.log_message("Buffer overflow (>1MB without newline), disconnecting client")
+                        try:
+                            err = json.dumps({"status": "error", "message": "Request too large (>1MB)"}) + '\n'
+                            client.sendall(err.encode('utf-8'))
+                        except Exception:
+                            pass
+                        break
 
                 except Exception as e:
                     self.log_message("Error handling client data: " + str(e))
@@ -214,8 +227,12 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error in client handler: " + str(e))
         finally:
             try:
+                client.shutdown(socket.SHUT_RDWR)
+            except (OSError, socket.error):
+                pass
+            try:
                 client.close()
-            except Exception:
+            except (OSError, socket.error):
                 pass
             # Remove from tracked sockets
             if client in self.client_sockets:

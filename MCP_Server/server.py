@@ -297,7 +297,12 @@ class M4LConnection:
 
             try:
                 data, _addr = self.recv_sock.recvfrom(65535)
-                return self._parse_m4l_response(data)
+                result = self._parse_m4l_response(data)
+                # Verify request_id matches (warn on mismatch but don't fail)
+                resp_id = result.get("id", "")
+                if resp_id and resp_id != request_id:
+                    logger.warning(f"M4L response id mismatch: expected {request_id}, got {resp_id}")
+                return result
             except socket.timeout:
                 logger.warning(f"M4L response timeout (attempt {attempt})")
                 if attempt < max_attempts:
@@ -724,7 +729,7 @@ def _get_server_version() -> str:
         from importlib.metadata import version as _pkg_version
         return _pkg_version("ableton-mcp-beta")
     except Exception:
-        return "1.6.0"
+        return "1.8.1"
 
 
 def _get_m4l_status() -> tuple:
