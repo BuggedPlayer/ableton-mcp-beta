@@ -1,4 +1,4 @@
-# AbletonMCP/init.py
+# AbletonMCP Beta / init.py
 from __future__ import absolute_import, print_function, unicode_literals
 
 from _Framework.ControlSurface import ControlSurface
@@ -23,12 +23,12 @@ def create_instance(c_instance):
     return AbletonMCP(c_instance)
 
 class AbletonMCP(ControlSurface):
-    """AbletonMCP Remote Script for Ableton Live"""
+    """AbletonMCP Beta Remote Script for Ableton Live"""
     
     def __init__(self, c_instance):
         """Initialize the control surface"""
         ControlSurface.__init__(self, c_instance)
-        self.log_message("AbletonMCP Remote Script initializing...")
+        self.log_message("AbletonMCP Beta Remote Script initializing...")
         
         # Socket server for communication
         self.server = None
@@ -40,10 +40,10 @@ class AbletonMCP(ControlSurface):
         # Start the socket server
         self.start_server()
         
-        self.log_message("AbletonMCP initialized")
+        self.log_message("AbletonMCP Beta initialized")
         
         # Show a message in Ableton
-        self.show_message("AbletonMCP: Listening for commands on port " + str(DEFAULT_PORT))
+        self.show_message("AbletonMCP Beta: Listening on port " + str(DEFAULT_PORT))
 
     @property
     def _song(self):
@@ -52,7 +52,7 @@ class AbletonMCP(ControlSurface):
 
     def disconnect(self):
         """Called when Ableton closes or the control surface is removed"""
-        self.log_message("AbletonMCP disconnecting...")
+        self.log_message("AbletonMCP Beta disconnecting...")
         self.running = False
         
         # Close all client sockets so their threads can exit
@@ -80,7 +80,7 @@ class AbletonMCP(ControlSurface):
                 client_thread.join(1.0)
         
         ControlSurface.disconnect(self)
-        self.log_message("AbletonMCP disconnected")
+        self.log_message("AbletonMCP Beta disconnected")
     
     def start_server(self):
         """Start the socket server in a separate thread"""
@@ -98,7 +98,7 @@ class AbletonMCP(ControlSurface):
             self.log_message("Server started on port " + str(DEFAULT_PORT))
         except Exception as e:
             self.log_message("Error starting server: " + str(e))
-            self.show_message("AbletonMCP: Error starting server - " + str(e))
+            self.show_message("AbletonMCP Beta: Error starting server - " + str(e))
     
     def _server_thread(self):
         """Server thread implementation - handles client connections"""
@@ -112,7 +112,7 @@ class AbletonMCP(ControlSurface):
                     # Accept connections with timeout
                     client, address = self.server.accept()
                     self.log_message("Connection accepted from " + str(address))
-                    self.show_message("AbletonMCP: Client connected")
+                    self.show_message("AbletonMCP Beta: Client connected")
                     
                     # Handle client in a separate thread
                     client_thread = threading.Thread(

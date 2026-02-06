@@ -1,4 +1,4 @@
-# ableton_mcp_server.py
+# ableton_mcp_server.py — AbletonMCP Beta
 from mcp.server.fastmcp import FastMCP, Context
 import socket
 import json
@@ -14,7 +14,7 @@ import struct
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("AbletonMCPServer")
+logger = logging.getLogger("AbletonMCP-Beta")
 
 @dataclass
 class AbletonConnection:
@@ -349,7 +349,7 @@ class M4LConnection:
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
     """Manage server startup and shutdown lifecycle"""
     try:
-        logger.info("AbletonMCP server starting up")
+        logger.info("AbletonMCP Beta server starting up")
         
         try:
             ableton = get_ableton_connection()
@@ -369,11 +369,11 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             logger.info("Disconnecting M4L bridge on shutdown")
             _m4l_connection.disconnect()
             _m4l_connection = None
-        logger.info("AbletonMCP server shut down")
+        logger.info("AbletonMCP Beta server shut down")
 
 # Create the MCP server with lifespan support
 mcp = FastMCP(
-    "AbletonMCP",
+    "AbletonMCP-Beta",
     lifespan=server_lifespan
 )
 
