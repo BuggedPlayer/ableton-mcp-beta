@@ -4,6 +4,53 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v2.0.0
+
+### New: Device Chain Navigation (3 tools, requires M4L)
+- `discover_rack_chains` — discover chains, nested devices, and drum pads inside Instrument/Audio Effect/Drum Racks
+- `get_chain_device_parameters` — read all parameters of a device nested inside a rack chain
+- `set_chain_device_parameter` — set a parameter on a device nested inside a rack chain
+- LOM paths: `live_set tracks T devices D chains C devices CD`
+
+### New: Simpler / Sample Deep Access (3 tools, requires M4L)
+- `get_simpler_info` — get Simpler device state: playback mode, sample file path, markers, warp settings, slices, warp-mode-specific properties
+- `set_simpler_sample_properties` — set sample start/end markers, warping, warp mode, gain, slicing sensitivity
+- `simpler_manage_slices` — manage slices: insert at position, remove at position, clear all, reset to auto-detected
+- LOM paths: `live_set tracks T devices D sample`
+
+### New: Wavetable Modulation Matrix (3 tools, requires M4L)
+- `get_wavetable_info` — get Wavetable device state: oscillator wavetable categories/indices, modulation matrix with active modulations, voice/unison/filter settings
+- `set_wavetable_modulation` — set modulation amount in Wavetable's mod matrix (sources: Env2, Env3, LFO1, LFO2)
+- `set_wavetable_properties` — set oscillator wavetable category/index, filter routing, mono/poly, unison mode/voices, effect modes
+
+### M4L Bridge v2.0.0
+- **9 new OSC commands**: `/discover_chains`, `/get_chain_device_params`, `/set_chain_device_param`, `/get_simpler_info`, `/set_simpler_sample_props`, `/simpler_slice`, `/get_wavetable_info`, `/set_wavetable_modulation`, `/set_wavetable_props`
+- **Generic LOM helper**: `discoverParamsAtPath()` enables parameter discovery at arbitrary LOM paths (used by chain device params)
+- **OSC packet builders**: All 9 new commands have corresponding builders in `M4LConnection._build_osc_packet()`
+
+### TCP Port: Snapshot / Restore / Morph / Macros
+- **`snapshot_device_state`** — ported from M4L `discover_params` to TCP `get_device_parameters`. No longer requires M4L bridge.
+- **`restore_device_snapshot`** — ported from `_m4l_batch_set_params()` to `_tcp_batch_restore_params()` using name-based parameters. No M4L needed.
+- **`snapshot_all_devices`** — ported to TCP. Snapshots all devices across tracks without M4L.
+- **`restore_group_snapshot`** — ported to TCP.
+- **`morph_between_snapshots`** — ported to TCP. Now uses name-based parameter matching instead of index-based.
+- **`set_macro_value`** — ported to TCP. Auto-looks up parameter names from device if not cached.
+- **`generate_preset`** — fully rewritten to use TCP. No longer calls M4L `discover_params` (which caused timeouts and crashes).
+- **New helper**: `_tcp_batch_restore_params()` — restores device parameters via TCP `set_device_parameters_batch` using name-based params.
+
+### Removed Redundant Tools (-3)
+- **`arm_track`** — use `set_track_arm(arm=True)` instead
+- **`disarm_track`** — use `set_track_arm(arm=False)` instead
+- **`get_return_tracks_info`** — use `get_return_tracks` instead
+
+### Bug Fixes & Improvements
+- **Fixed `grid_to_clip` silent failures**: `except Exception: pass` replaced with proper error returns
+- **Fixed `generate_preset` device targeting**: improved docstring guidance to target synth, not effects
+- **Reduced bruteforce resolver logging**: removed per-iteration logging from `devices.py` — only MATCH and ERROR logged now
+- Total tools: 132 -> **138** (+9 new, -3 removed)
+
+---
+
 ## v1.9.1
 
 ### New: Batch Parameter Setting (1 tool)
