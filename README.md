@@ -33,7 +33,7 @@ A Python server that implements the Model Context Protocol and bridges between t
 - **`AbletonConnection`** — TCP client connecting to the Remote Script on port 9877. Sends newline-delimited JSON commands and receives newline-delimited JSON responses. Includes automatic reconnection logic.
 - **`M4LConnection`** — UDP/OSC client connecting to the Max for Live bridge. Sends native OSC messages on port 9878 and listens for base64-encoded JSON responses on port 9879. Includes auto-reconnect with exponential backoff.
 
-The server exposes **94 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
+The server exposes **128 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
 
 **Startup sequence:**
 1. Connect to Ableton Remote Script (TCP port 9877)
@@ -55,7 +55,7 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 
 ---
 
-## Complete Tool Reference (94 Tools)
+## Complete Tool Reference (128 Tools)
 
 ### Session & Transport
 
@@ -131,6 +131,82 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 | `get_clip_automation` | `track_index: int, clip_index: int, parameter_name: str` | Read existing automation — samples envelope at 64 points across the clip |
 | `clear_clip_automation` | `track_index: int, clip_index: int, parameter_name: str` | Clear automation for a specific parameter in a clip |
 | `list_clip_automated_parameters` | `track_index: int, clip_index: int` | List all parameters that have automation in a clip (mixer, sends, device params) |
+
+### ASCII Grid Notation (v1.9.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `clip_to_grid` | `track_index: int, clip_index: int` | Read a MIDI clip as ASCII grid notation (auto-detects drum vs melodic) |
+| `grid_to_clip` | `track_index: int, clip_index: int, grid: str, length: float, clear_existing: bool` | Write ASCII grid notation to a MIDI clip (creates clip if needed) |
+
+### Transport & Recording Controls (v1.9.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `get_loop_info` | — | Get loop bracket start, end, length, and current playback time |
+| `get_recording_status` | — | Get armed tracks, record mode, and overdub state |
+| `set_loop_start` | `position: float` | Set loop start position in beats |
+| `set_loop_end` | `position: float` | Set loop end position in beats |
+| `set_loop_length` | `length: float` | Set loop length in beats (adjusts end relative to start) |
+| `set_playback_position` | `position: float` | Move the playhead to a specific beat position |
+| `set_arrangement_overdub` | `enabled: bool` | Enable or disable arrangement overdub mode |
+| `start_arrangement_recording` | — | Start arrangement recording |
+| `stop_arrangement_recording` | — | Stop arrangement recording |
+| `set_metronome` | `enabled: bool` | Enable or disable the metronome |
+| `tap_tempo` | — | Tap tempo (call repeatedly to set tempo by tapping) |
+
+### Bulk Track Queries (v1.9.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `get_all_tracks_info` | — | Get information about all tracks at once (bulk query) |
+| `get_return_tracks_info` | — | Get detailed info about all return tracks (bulk query) |
+
+### Additional Track Management (v1.9.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `create_return_track` | — | Create a new return track |
+| `set_track_color` | `track_index: int, color_index: int` | Set track color (0-69, Ableton's palette) |
+| `arm_track` | `track_index: int` | Arm a track for recording |
+| `disarm_track` | `track_index: int` | Disarm a track (disable recording) |
+| `group_tracks` | `track_indices: list` | Group multiple tracks together |
+
+### Audio Clip Tools (v1.9.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `get_audio_clip_info` | `track_index: int, clip_index: int` | Get audio clip details (warp mode, gain, file path) |
+| `analyze_audio_clip` | `track_index: int, clip_index: int` | Comprehensive audio clip analysis (tempo, warp, sample properties, frequency hints) |
+| `set_warp_mode` | `track_index: int, clip_index: int, warp_mode: str` | Set warp mode (beats, tones, texture, re_pitch, complex, complex_pro) |
+| `set_clip_warp` | `track_index: int, clip_index: int, warping_enabled: bool` | Enable or disable warping for an audio clip |
+| `reverse_clip` | `track_index: int, clip_index: int` | Reverse an audio clip |
+| `freeze_track` | `track_index: int` | Freeze a track (render effects in place to reduce CPU load) |
+| `unfreeze_track` | `track_index: int` | Unfreeze a track |
+
+### Arrangement Editing (v1.9.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `get_arrangement_clips` | `track_index: int` | Get all clips in arrangement view for a track |
+| `delete_time` | `start_time: float, end_time: float` | Delete a section of time from the arrangement (shifts everything after) |
+| `duplicate_time` | `start_time: float, end_time: float` | Duplicate a section of time in the arrangement |
+| `insert_silence` | `position: float, length: float` | Insert silence at a position (shifts everything after) |
+
+### Arrangement Automation (v1.9.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `create_track_automation` | `track_index: int, parameter_name: str, automation_points: list` | Create automation for a track parameter (arrangement-level). Points: `[{time, value}, ...]` |
+| `clear_track_automation` | `track_index: int, parameter_name: str, start_time: float, end_time: float` | Clear automation for a parameter in a time range (arrangement-level) |
+
+### MIDI & Performance Tools (v1.9.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `capture_midi` | — | Capture recently played MIDI notes (Live 11+) |
+| `apply_groove` | `track_index: int, clip_index: int, groove_amount: float` | Apply groove to a MIDI clip (0.0-1.0) |
+| `get_macro_values` | `track_index: int, device_index: int` | Get current macro knob values for an Instrument Rack |
 
 ### Scenes
 
@@ -361,6 +437,18 @@ The server now automatically connects to the M4L bridge device on startup, right
 
 **Core primitive**: `batch_set_hidden_parameters` sets multiple params reliably via sequential `set_hidden_param` UDP calls with automatic pacing.
 
+### v1.9.0 — Major Expansion (34 New Tools)
+
+- **ASCII Grid Notation**: `clip_to_grid` / `grid_to_clip` for visual drum/melodic pattern editing
+- **Transport & Recording**: Full transport control — loop info, recording, overdub, metronome, tap tempo, playback position
+- **Bulk Queries**: `get_all_tracks_info` / `get_return_tracks_info` for fast session overview
+- **Track Management**: `create_return_track`, `set_track_color`, `arm_track`, `disarm_track`, `group_tracks`
+- **Audio Clip Tools**: Warp mode, clip analysis, reverse, freeze/unfreeze tracks
+- **Arrangement Editing**: `get_arrangement_clips`, `delete_time`, `duplicate_time`, `insert_silence`
+- **Arrangement Automation**: `create_track_automation`, `clear_track_automation`
+- **MIDI & Performance**: `capture_midi`, `apply_groove`, `get_macro_values`
+- Total tools: 94 -> **128** (+34 new tools)
+
 ### v1.8.2 — Batch Hidden Parameter Crash Fix
 
 - **Fixed**: `batch_set_hidden_parameters` was crashing Ableton when setting more than 2 parameters. Root cause: Max's OSC/UDP handling corrupted long base64-encoded payloads.
@@ -377,17 +465,6 @@ The server now automatically connects to the M4L bridge device on startup, right
 - **Fixed**: Buffer overflow now notifies client with error message before disconnecting (was silent drop)
 - **Fixed**: UTF-8 decode uses `errors='replace'` — invalid bytes no longer crash the client handler
 - **Fixed**: M4L response `request_id` verification — warns on mismatch to detect stale responses
-- **Fixed**: Server version fallback updated to 1.8.1
-- **Improved**: Thread join timeout on disconnect increased from 1s to 3s for cleaner shutdown
-
-### v1.8.1 — Stability & Hidden Parameter Crash Fix
-
-- **Fixed**: `set_device_hidden_parameter` no longer crashes Ableton — added try-catch around LOM parameter set/get calls in the M4L bridge JS (matching the batch handler pattern)
-- **Fixed**: Proper `socket.shutdown()` before `close()` on disconnect — prevents socket hangs and FD leaks
-- **Fixed**: Buffer overflow now notifies client with error message before disconnecting (was silent drop)
-- **Fixed**: UTF-8 decode uses `errors='replace'` — invalid bytes no longer crash the client handler
-- **Fixed**: M4L response `request_id` verification — warns on mismatch to detect stale responses
-- **Fixed**: Server version fallback updated to 1.8.1
 - **Improved**: Thread join timeout on disconnect increased from 1s to 3s for cleaner shutdown
 
 ### v1.8.0 — Arrangement View & Advanced Editing
@@ -430,18 +507,25 @@ Add to `claude_desktop_config.json`:
 {
     "mcpServers": {
         "AbletonMCP-Beta": {
-            "command": "uvx",
-            "args": ["path/to/dist/ableton_mcp_beta-1.8.2-py3-none-any.whl"]
+            "command": "uv",
+            "args": ["run", "--directory", "C:\\path\\to\\ableton-mcp-stable", "ableton-mcp-stable"]
         }
     }
 }
 ```
 
+Replace `C:\\path\\to\\ableton-mcp-stable` with the actual path to your cloned/downloaded repo.
+
 After starting, the web dashboard is available at `http://127.0.0.1:9880`.
 
 ### Cursor Integration
 
-Go to Cursor Settings > MCP and set the command to the wheel path. Only run one instance of the MCP server (either Cursor or Claude Desktop), not both.
+Go to Cursor Settings > MCP and add a new server with the command:
+```
+uv run --directory C:\path\to\ableton-mcp-stable ableton-mcp-stable
+```
+
+Only run one instance of the MCP server (either Cursor or Claude Desktop), not both.
 
 ### Installing the Remote Script
 

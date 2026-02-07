@@ -4,6 +4,66 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v1.9.0
+
+### New: ASCII Grid Notation (2 tools)
+- `clip_to_grid` — read a MIDI clip as ASCII grid notation (auto-detects drum vs melodic)
+- `grid_to_clip` — write ASCII grid notation to a MIDI clip (creates clip if needed)
+
+### New: Transport & Recording Controls (10 tools)
+- `get_loop_info` — get loop bracket start, end, length, and current playback time
+- `get_recording_status` — get armed tracks, record mode, and overdub state
+- `set_loop_start` — set loop start position in beats
+- `set_loop_end` — set loop end position in beats
+- `set_loop_length` — set loop length in beats (adjusts end relative to start)
+- `set_playback_position` — move the playhead to a specific beat position
+- `set_arrangement_overdub` — enable or disable arrangement overdub mode
+- `start_arrangement_recording` — start arrangement recording
+- `stop_arrangement_recording` — stop arrangement recording
+- `set_metronome` — enable or disable the metronome
+- `tap_tempo` — tap tempo (call repeatedly to set tempo by tapping)
+
+### New: Bulk Track Queries (2 tools)
+- `get_all_tracks_info` — get information about all tracks at once (bulk query)
+- `get_return_tracks_info` — get detailed info about all return tracks (bulk query)
+
+### New: Track Management (5 tools)
+- `create_return_track` — create a new return track
+- `set_track_color` — set the color of a track (0-69, Ableton's palette)
+- `arm_track` — arm a track for recording
+- `disarm_track` — disarm a track (disable recording)
+- `group_tracks` — group multiple tracks together
+
+### New: Audio Clip Tools (6 tools)
+- `get_audio_clip_info` — get audio clip details (warp mode, gain, file path)
+- `analyze_audio_clip` — comprehensive audio clip analysis (tempo, warp, sample properties, frequency hints)
+- `set_warp_mode` — set warp mode (beats, tones, texture, re_pitch, complex, complex_pro)
+- `set_clip_warp` — enable or disable warping for an audio clip
+- `reverse_clip` — reverse an audio clip
+- `freeze_track` / `unfreeze_track` — freeze/unfreeze tracks to reduce CPU load
+
+### New: Arrangement Editing (4 tools)
+- `get_arrangement_clips` — get all clips in arrangement view for a track
+- `delete_time` — delete a section of time from the arrangement (shifts everything after)
+- `duplicate_time` — duplicate a section of time in the arrangement
+- `insert_silence` — insert silence at a position (shifts everything after)
+
+### New: Arrangement Automation (2 tools)
+- `create_track_automation` — create automation for a track parameter (arrangement-level)
+- `clear_track_automation` — clear automation for a parameter in a time range (arrangement-level)
+
+### New: MIDI & Performance Tools (3 tools)
+- `capture_midi` — capture recently played MIDI notes (Live 11+)
+- `apply_groove` — apply groove to a MIDI clip
+- `get_macro_values` — get current macro knob values for an Instrument Rack
+
+### Improvements
+- Package renamed to `ableton-mcp-stable` for stable release channel
+- Fixed server version detection (`importlib.metadata` now uses correct package name)
+- Total tools: 94 -> **128** (+34 new tools)
+
+---
+
 ## v1.8.2
 
 ### Bug Fix: `batch_set_hidden_parameters` crash
