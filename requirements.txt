@@ -1,6 +1,7 @@
 # AbletonMCP - Ableton Live Model Context Protocol Integration
+# Version 1.9.0
 # Python >= 3.10 required
-# Repository: https://github.com/ahujasid/ableton-mcp
+# Repository: https://github.com/BuggedPlayer/ableton-mcp-beta
 
 # Core dependency
 mcp[cli]>=1.3.0

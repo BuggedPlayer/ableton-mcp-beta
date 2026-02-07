@@ -1,13 +1,14 @@
 ================================================================================
   AbletonMCP - Installation Process Guide
   Ableton Live Model Context Protocol Integration
+  Version 1.9.0
 ================================================================================
 
 PREREQUISITES
 --------------------------------------------------------------------------------
 Before starting, make sure you have the following installed:
 
-  - Ableton Live 10 or newer (11+ recommended)
+  - Ableton Live 10 or newer (11+ recommended, 12 for full feature support)
   - Python 3.10 or newer
   - uv package manager (https://docs.astral.sh/uv/getting-started/installation/)
   - Claude Desktop, Claude.ai, or Cursor (as your AI assistant / MCP host)
@@ -40,7 +41,7 @@ STEP 2: INSTALL THE ABLETON REMOTE SCRIPT
 This script runs INSIDE Ableton Live and creates a socket server so the MCP
 server can send commands to Ableton.
 
-  1. Locate the "AbletonMCP_Remote_Script" folder inside the ableton-mcp-beta
+  1. Locate the "AbletonMCP_Remote_Script" folder inside the ableton-mcp-stable
      directory. It contains an "__init__.py" file.
 
   2. Copy the entire "AbletonMCP_Remote_Script" folder (or just create a folder
@@ -87,26 +88,37 @@ STEP 3: CONFIGURE YOUR AI ASSISTANT (MCP HOST)
 
      {
        "mcpServers": {
-         "AbletonMCP": {
-           "command": "uvx",
-           "args": ["ableton-mcp"]
+         "AbletonMCP-Beta": {
+           "command": "uv",
+           "args": ["run", "--directory", "C:\\path\\to\\ableton-mcp-stable", "ableton-mcp-stable"]
          }
        }
      }
 
+     Replace "C:\\path\\to\\ableton-mcp-stable" with the actual path to
+     your downloaded/cloned repository folder.
+
   4. Save the file and restart Claude Desktop.
 
---- Option B: Claude.ai (Web / Mobile / Desktop App) ---
+--- Option B: Claude Code (CLI) ---
 
-  If you are using Claude.ai with MCP integrations enabled, the AbletonMCP
-  tools should appear automatically when the server is running and configured.
+  Add to your Claude Code MCP settings:
+
+     {
+       "mcpServers": {
+         "AbletonMCP-Beta": {
+           "command": "uv",
+           "args": ["run", "--directory", "C:\\path\\to\\ableton-mcp-stable", "ableton-mcp-stable"]
+         }
+       }
+     }
 
 --- Option C: Cursor ---
 
   1. Go to Cursor Settings > MCP.
   2. Add a new server with the command:
 
-     uvx ableton-mcp
+     uv run --directory C:\path\to\ableton-mcp-stable ableton-mcp-stable
 
   3. Save and restart Cursor.
 
@@ -131,35 +143,44 @@ STEP 5: ALTERNATIVE - INSTALL FROM SOURCE (PIP)
 
 If you cloned/downloaded the repo and want to install locally:
 
-    cd C:\Users\akioo\Downloads\ableton-mcp-beta
+    cd C:\path\to\ableton-mcp-stable
     pip install -e .
 
 Or using uv:
 
-    cd C:\Users\akioo\Downloads\ableton-mcp-beta
+    cd C:\path\to\ableton-mcp-stable
     uv pip install -e .
 
-Then configure your MCP host to point to the local server:
-
-    {
-      "mcpServers": {
-        "AbletonMCP": {
-          "command": "python",
-          "args": ["C:/Users/akioo/Downloads/ableton-mcp-beta/MCP_Server/server.py"]
-        }
-      }
-    }
+Then configure your MCP host to point to the installed script name
+"ableton-mcp-stable".
 
 
 ================================================================================
-STEP 6: VERIFY THE CONNECTION
+STEP 6: INSTALL THE MAX FOR LIVE BRIDGE (OPTIONAL)
+================================================================================
+
+The M4L bridge provides access to hidden/non-automatable device parameters.
+It is optional but required for snapshot, morph, macro, and preset tools.
+
+  1. Requires Ableton Live Suite or Standard + Max for Live.
+  2. Open the pre-built M4L device from the M4L_Device folder,
+     or create a new Max MIDI Effect and build the patch:
+       [udpreceive 9878] -> [js m4l_bridge.js] -> [udpsend localhost 9879]
+  3. Copy M4L_Device/m4l_bridge.js to the device's folder.
+  4. Save the device and load it on any track.
+  5. See M4L_Device/README.md for detailed instructions.
+
+
+================================================================================
+STEP 7: VERIFY THE CONNECTION
 ================================================================================
 
   1. Make sure Ableton Live is running with the AbletonMCP control surface active.
   2. Make sure your AI assistant (Claude/Cursor) is running with the MCP config.
   3. In Claude, you should see a hammer icon indicating the AbletonMCP tools
      are available.
-  4. Test with a simple command like: "Get information about my Ableton session"
+  4. Open the web dashboard at http://127.0.0.1:9880 to verify connection status.
+  5. Test with a simple command like: "Get information about my Ableton session"
 
 
 ================================================================================
@@ -170,7 +191,11 @@ TROUBLESHOOTING
     - Ensure the AbletonMCP Remote Script is loaded in Ableton (check
       Preferences > Link, Tempo & MIDI).
     - Ensure the MCP server config is correct in your AI assistant.
-    - The server communicates via TCP socket on localhost (127.0.0.1).
+    - The server communicates via TCP socket on localhost (127.0.0.1:9877).
+
+  "unexpected argument '--dir'" error:
+    - Use "--directory" instead of "--dir" in your config. Newer versions of
+      uv renamed this flag.
 
   Timeout errors:
     - Simplify your requests or break them into smaller steps.
@@ -183,6 +208,10 @@ TROUBLESHOOTING
     - Ensure Python 3.10+ is installed: python --version
     - If using multiple Python versions, specify the correct one in your config.
 
+  Dashboard not loading:
+    - Check that Claude Desktop is running the server (restart after config change).
+    - If port 9880 is in use, set ABLETON_MCP_DASHBOARD_PORT env var.
+
   General fix:
     - Restart both Claude/Cursor and Ableton Live.
     - Always save your Ableton project before experimenting.
@@ -192,9 +221,8 @@ TROUBLESHOOTING
 USEFUL LINKS
 ================================================================================
 
-  GitHub:   https://github.com/ahujasid/ableton-mcp
+  GitHub:   https://github.com/BuggedPlayer/ableton-mcp-beta
   Discord:  https://discord.gg/3ZrMyGKnaU
-  Video:    https://youtu.be/iJWJqyVuPS8
   uv:       https://docs.astral.sh/uv/getting-started/installation/
   License:  MIT
 
