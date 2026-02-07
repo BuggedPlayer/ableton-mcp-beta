@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: ableton-mcp-stable
-Version: 1.9.0
+Version: 2.0.0
 Summary: AbletonMCP Beta — Ableton Live integration through the Model Context Protocol
 Author-email: Siddharth Ahuja <ahujasid@gmail.com>
 License: MIT
@@ -50,7 +50,7 @@ A Python server that implements the Model Context Protocol and bridges between t
 - **`AbletonConnection`** — TCP client connecting to the Remote Script on port 9877. Sends newline-delimited JSON commands and receives newline-delimited JSON responses. Includes automatic reconnection logic.
 - **`M4LConnection`** — UDP/OSC client connecting to the Max for Live bridge. Sends native OSC messages on port 9878 and listens for base64-encoded JSON responses on port 9879. Includes auto-reconnect with exponential backoff.
 
-The server exposes **132 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
+The server exposes **138 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
 
 **Startup sequence:**
 1. Connect to Ableton Remote Script (TCP port 9877)
@@ -70,11 +70,15 @@ A live web dashboard running on a background daemon thread alongside the MCP ser
 - Non-fatal: if the dashboard fails to start (e.g. port conflict), the MCP server continues normally
 
 ### 4. Max for Live Bridge (`M4L_Device/m4l_bridge.js`) *(optional)*
-A JavaScript file running inside a Max for Live `[js]` object. It provides deep Live Object Model (LOM) access to hidden/non-automatable device parameters that the standard Remote Script API cannot reach.
+A JavaScript file (v2.0.0) running inside a Max for Live `[js]` object. It provides deep Live Object Model (LOM) access for:
+- Hidden/non-automatable device parameters
+- Device chain navigation (Instrument Racks, Drum Racks, nested devices)
+- Simpler/Sample deep access (warp markers, slices, sample properties)
+- Wavetable modulation matrix control (mod sources, oscillator wavetables)
 
 ---
 
-## Complete Tool Reference (132 Tools)
+## Complete Tool Reference (138 Tools)
 
 ### Session & Transport
 
@@ -179,7 +183,6 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 | Tool | Parameters | Description |
 |---|---|---|
 | `get_all_tracks_info` | — | Get information about all tracks at once (bulk query) |
-| `get_return_tracks_info` | — | Get detailed info about all return tracks (bulk query) |
 
 ### Additional Track Management (v1.9.0)
 
@@ -187,8 +190,6 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 |---|---|---|
 | `create_return_track` | — | Create a new return track |
 | `set_track_color` | `track_index: int, color_index: int` | Set track color (0-69, Ableton's palette) |
-| `arm_track` | `track_index: int` | Arm a track for recording |
-| `disarm_track` | `track_index: int` | Disarm a track (disable recording) |
 | `group_tracks` | `track_indices: list` | Group multiple tracks together |
 
 ### Audio Clip Tools (v1.9.0)
@@ -289,6 +290,30 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 | `list_instrument_rack_presets` | — | List Instrument Rack presets in user library (VST/AU workaround) |
 | `batch_set_hidden_parameters` | `track_index: int, device_index: int, parameters: list` | Set multiple hidden parameters in one call. Each entry: `{index, value}` |
 
+### Device Chain Navigation (v2.0.0, requires M4L)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `discover_rack_chains` | `track_index: int, device_index: int` | Discover chains, nested devices, and drum pads inside Instrument/Audio Effect/Drum Racks |
+| `get_chain_device_parameters` | `track_index: int, device_index: int, chain_index: int, chain_device_index: int` | Get all parameters of a device nested inside a rack chain |
+| `set_chain_device_parameter` | `track_index: int, device_index: int, chain_index: int, chain_device_index: int, parameter_index: int, value: float` | Set a parameter on a device nested inside a rack chain |
+
+### Simpler / Sample Deep Access (v2.0.0, requires M4L)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `get_simpler_info` | `track_index: int, device_index: int` | Get Simpler device info: playback mode, sample file, markers, warp settings, slices |
+| `set_simpler_sample_properties` | `track_index: int, device_index: int, ...` | Set sample properties: start/end markers, warping, warp mode, gain, slicing sensitivity |
+| `simpler_manage_slices` | `track_index: int, device_index: int, action: str, slice_time?: float` | Manage slices: insert, remove, clear, or reset to auto-detected positions |
+
+### Wavetable Modulation Matrix (v2.0.0, requires M4L)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `get_wavetable_info` | `track_index: int, device_index: int` | Get Wavetable device state: oscillator wavetables, modulation matrix, unison, filter routing |
+| `set_wavetable_modulation` | `track_index: int, device_index: int, target_index: int, source_index: int, amount: float` | Set modulation amount in Wavetable's mod matrix. Sources: 0=Env2, 1=Env3, 2=LFO1, 3=LFO2 |
+| `set_wavetable_properties` | `track_index: int, device_index: int, ...` | Set Wavetable properties: oscillator wavetable category/index, filter routing, unison, voices |
+
 ### Snapshot & Versioning (v1.6.0)
 
 | Tool | Parameters | Description |
@@ -373,6 +398,15 @@ The MCP server sends native OSC messages to port **9878** (M4L `udpreceive`). Th
 | `/set_hidden_param` | `track_index, device_index, param_index, value, request_id` | Set a parameter by LOM index |
 | `/batch_set_hidden_params` | `track_index, device_index, params_b64, request_id` | Set multiple params at once (chunked). `params_b64` is URL-safe base64-encoded JSON: `[{index, value}, ...]`. Note: v1.8.2+ server uses sequential `/set_hidden_param` calls instead for reliability. |
 | `/check_dashboard` | `request_id` | Returns the dashboard URL and bridge version |
+| `/discover_chains` | `track_index, device_index, request_id` | Discover rack chains, nested devices, and drum pads (v2.0.0) |
+| `/get_chain_device_params` | `track_index, device_index, chain_index, chain_device_index, request_id` | Get all params for a device inside a chain (v2.0.0) |
+| `/set_chain_device_param` | `track_index, device_index, chain_index, chain_device_index, param_index, value, request_id` | Set a param on a nested device (v2.0.0) |
+| `/get_simpler_info` | `track_index, device_index, request_id` | Get Simpler device and sample info (v2.0.0) |
+| `/set_simpler_sample_props` | `track_index, device_index, props_b64, request_id` | Set sample properties (v2.0.0) |
+| `/simpler_slice` | `track_index, device_index, action, [slice_time], request_id` | Manage slices (insert/remove/clear/reset) (v2.0.0) |
+| `/get_wavetable_info` | `track_index, device_index, request_id` | Get Wavetable device state and mod matrix (v2.0.0) |
+| `/set_wavetable_modulation` | `track_index, device_index, target_index, source_index, amount, request_id` | Set modulation amount in Wavetable mod matrix (v2.0.0) |
+| `/set_wavetable_props` | `track_index, device_index, props_b64, request_id` | Set Wavetable device properties (v2.0.0) |
 
 **Why base64?** Max treats `{` and `}` as special characters in its messaging system, so JSON responses are base64-encoded before being sent through `outlet()`.
 
@@ -431,32 +465,37 @@ The Remote Script (`AbletonMCP_Remote_Script/__init__.py`) is a `ControlSurface`
 
 ---
 
-## v1.6.0 Feature Systems
+## v2.0.0 Feature Systems
 
-Five advanced feature systems built on shared core primitives. All route through the M4L bridge — no Remote Script changes needed.
+### Device Chain Navigation (NEW — requires M4L)
+Navigate inside Instrument Racks, Audio Effect Racks, and Drum Racks. Discover chains and nested devices, read/write parameters on devices that are invisible to the top-level Remote Script API. For Drum Racks, enumerate populated pads by MIDI note number.
+
+### Simpler / Sample Deep Access (NEW — requires M4L)
+Read and control Simpler's loaded sample properties: start/end markers, warp mode, gain, slicing sensitivity. Manage slices programmatically (insert, remove, clear, reset). Access warp-mode-specific properties (beats granulation, texture flux, complex pro formants, etc.).
+
+### Wavetable Modulation Matrix (NEW — requires M4L)
+Read and control Wavetable's modulation matrix: set modulation amounts from any source (Env2, Env3, LFO1, LFO2) to any target parameter. Change oscillator wavetable selections, filter routing, unison mode/voices, and polyphony settings.
 
 ### Intelligent Preset Generator
-Discover all device parameters, then Claude intelligently sets values based on text descriptions like "bright bass", "warm pad", or "aggressive lead". Auto-snapshots current state for easy revert.
+Discover all device parameters, then Claude intelligently sets values based on text descriptions like "bright bass", "warm pad", or "aggressive lead". Auto-snapshots current state for easy revert. **v2.0.0**: Now uses TCP (no M4L needed).
 
 ### Smart Macro Controller
-Link multiple parameters across devices to a single 0.0-1.0 "super-knob". When the macro moves, all linked parameters interpolate proportionally. Supports cross-device, cross-track linking.
+Link multiple parameters across devices to a single 0.0-1.0 "super-knob". When the macro moves, all linked parameters interpolate proportionally. Supports cross-device, cross-track linking. **v2.0.0**: Now uses TCP (no M4L needed).
 
 ### VST/AU Parameter Mapper
 Scan third-party plugins, discover their hidden parameters, and create custom control surfaces with human-readable names organized by category.
 
 ### Preset Morph Engine
-Capture two different device states as snapshots, then smoothly morph between them at any position. Continuous parameters interpolate linearly; quantized parameters (waveform selectors) snap at the midpoint.
+Capture two different device states as snapshots, then smoothly morph between them at any position. Continuous parameters interpolate linearly; quantized parameters (waveform selectors) snap at the midpoint. **v2.0.0**: Now uses TCP (no M4L needed).
 
 ### Device State Versioning & Undo
-Snapshot every device on your tracks, then rollback to any previous state. Group snapshots capture multiple tracks at once. Compare any two snapshots to see exactly what changed.
+Snapshot every device on your tracks, then rollback to any previous state. Group snapshots capture multiple tracks at once. Compare any two snapshots to see exactly what changed. **v2.0.0**: Now uses TCP (no M4L needed).
 
 ### Web Status Dashboard
 Live web dashboard at `http://127.0.0.1:9880` showing connection status, tool call metrics, and a real-time server log. Runs automatically on startup — just open your browser.
 
 ### Auto M4L Bridge Connection
 The server now automatically connects to the M4L bridge device on startup, right after connecting to Ableton. No need to wait for a tool call to trigger the connection — the dashboard shows M4L status immediately.
-
-**Core primitive**: `batch_set_hidden_parameters` sets multiple params reliably via sequential `set_hidden_param` UDP calls with automatic pacing.
 
 ### Cached Browser Tree (v1.9.0+)
 The server scans Ableton's browser tree and caches results both in memory and on disk. This eliminates the slow, recursive browser queries that previously caused timeouts.
@@ -468,6 +507,18 @@ The server scans Ableton's browser tree and caches results both in memory and on
 - `search_browser` queries the local cache — **instant results, no more timeouts**
 - `refresh_browser_cache` forces a full re-scan and saves to disk
 - **Singleton guard**: exclusive TCP port lock prevents duplicate server instances from fighting
+
+### v2.0.0 — M4L Bridge v2 & Deep Device Access (9 New Tools)
+
+- **Device chain navigation**: `discover_rack_chains`, `get_chain_device_parameters`, `set_chain_device_parameter` — navigate inside Instrument Racks, Audio Effect Racks, and Drum Racks to read/write nested device parameters
+- **Simpler/Sample deep access**: `get_simpler_info`, `set_simpler_sample_properties`, `simpler_manage_slices` — read/write sample markers, warp settings, slicing; insert/remove/clear slices programmatically
+- **Wavetable modulation matrix**: `get_wavetable_info`, `set_wavetable_modulation`, `set_wavetable_properties` — control modulation matrix (Env2/Env3/LFO1/LFO2 → any target), oscillator wavetable selection, unison, filter routing
+- **M4L bridge v2.0.0**: 9 new OSC commands for chain navigation, Simpler/Sample, and Wavetable control
+- **TCP port for snapshots**: `snapshot_device_state`, `restore_device_snapshot`, `snapshot_all_devices`, `restore_group_snapshot`, `morph_between_snapshots`, `set_macro_value` all ported from M4L to TCP — no longer crash-prone, no longer require M4L bridge
+- **`generate_preset` ported to TCP**: No longer uses M4L for parameter discovery — eliminates timeout/crash when generating presets
+- **Removed redundant tools**: `arm_track`, `disarm_track`, `get_return_tracks_info` (use `set_track_arm` and `get_return_tracks` instead)
+- **Reduced bruteforce resolver logging**: No longer floods Ableton's log during display value resolution
+- Total tools: 132 -> **138** (+9 new, -3 removed)
 
 ### v1.9.1 — Browser Cache Overhaul & Batch Parameters
 
@@ -485,7 +536,7 @@ The server scans Ableton's browser tree and caches results both in memory and on
 - **ASCII Grid Notation**: `clip_to_grid` / `grid_to_clip` for visual drum/melodic pattern editing
 - **Transport & Recording**: Full transport control — loop info, recording, overdub, metronome, tap tempo, playback position
 - **Bulk Queries**: `get_all_tracks_info` / `get_return_tracks_info` for fast session overview
-- **Track Management**: `create_return_track`, `set_track_color`, `arm_track`, `disarm_track`, `group_tracks`
+- **Track Management**: `create_return_track`, `set_track_color`, `group_tracks`
 - **Audio Clip Tools**: Warp mode, clip analysis, reverse, freeze/unfreeze tracks
 - **Arrangement Editing**: `get_arrangement_clips`, `delete_time`, `duplicate_time`, `insert_silence`
 - **Arrangement Automation**: `create_track_automation`, `clear_track_automation`
