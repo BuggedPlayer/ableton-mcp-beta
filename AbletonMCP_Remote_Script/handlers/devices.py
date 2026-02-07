@@ -114,6 +114,46 @@ def set_device_parameter(
         raise
 
 
+def set_device_parameters_batch(
+    song, track_index, device_index, parameters, track_type="track", ctrl=None
+):
+    """Set multiple device parameters at once. parameters is a list of {name, value} dicts."""
+    try:
+        track = resolve_track(song, track_index, track_type)
+        device_list = list(track.devices)
+        if device_index < 0 or device_index >= len(device_list):
+            raise IndexError("Device index out of range")
+        device = device_list[device_index]
+
+        # Build a name->param lookup once
+        param_map = {}
+        for param in device.parameters:
+            param_map[param.name] = param
+
+        results = []
+        for entry in parameters:
+            pname = entry.get("name", "")
+            pvalue = entry.get("value", 0.0)
+            target = param_map.get(pname)
+            if target is None:
+                results.append({"name": pname, "error": "not found"})
+                continue
+            clamped = max(target.min, min(target.max, pvalue))
+            target.value = clamped
+            results.append({"name": target.name, "value": target.value, "clamped": clamped != pvalue})
+
+        return {
+            "device_name": device.name,
+            "track_type": track_type,
+            "results": results,
+            "count": len(results),
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error in batch set parameters: " + str(e))
+        raise
+
+
 def delete_device(song, track_index, device_index, ctrl=None):
     """Delete a device from a track."""
     try:

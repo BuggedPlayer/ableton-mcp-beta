@@ -55,7 +55,7 @@ MODIFYING_COMMANDS = {
     "create_scene", "delete_scene", "duplicate_scene",
     "fire_scene", "set_scene_name",
     # devices
-    "set_device_parameter", "delete_device",
+    "set_device_parameter", "set_device_parameters_batch", "delete_device",
     "set_macro_value",
     # browser
     "load_browser_item", "load_instrument_or_effect", "load_sample",
@@ -487,6 +487,10 @@ class AbletonMCP(ControlSurface):
                 song, p.get("track_index", 0), p.get("device_index", 0),
                 p.get("parameter_name", ""), p.get("value", 0.0),
                 p.get("track_type", "track"), ctrl)
+        elif cmd == "set_device_parameters_batch":
+            return handlers.devices.set_device_parameters_batch(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("parameters", []), p.get("track_type", "track"), ctrl)
         elif cmd == "delete_device":
             return handlers.devices.delete_device(song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
         elif cmd == "set_macro_value":
