@@ -381,7 +381,7 @@ The MCP server sends native OSC messages to port **9878** (M4L `udpreceive`). Th
 | `/set_hidden_param` | `track_index, device_index, param_index, value, request_id` | Set a parameter by LOM index |
 | `/batch_set_hidden_params` | `track_index, device_index, params_b64, request_id` | Set multiple params at once (chunked). `params_b64` is URL-safe base64-encoded JSON: `[{index, value}, ...]`. Note: v1.8.2+ server uses sequential `/set_hidden_param` calls instead for reliability. |
 | `/check_dashboard` | `request_id` | Returns the dashboard URL and bridge version |
-| `/discover_chains` | `track_index, device_index, request_id` | Discover rack chains, nested devices, and drum pads (v2.0.0) |
+| `/discover_chains` | `track_index, device_index, [extra_path], request_id` | Discover rack chains, nested devices, and drum pads. Optional `extra_path` for nested racks (v2.0.0) |
 | `/get_chain_device_params` | `track_index, device_index, chain_index, chain_device_index, request_id` | Get all params for a device inside a chain (v2.0.0) |
 | `/set_chain_device_param` | `track_index, device_index, chain_index, chain_device_index, param_index, value, request_id` | Set a param on a nested device (v2.0.0) |
 | `/get_simpler_info` | `track_index, device_index, request_id` | Get Simpler device and sample info (v2.0.0) |
@@ -416,6 +416,8 @@ The M4L bridge (`m4l_bridge.js`) is a JavaScript file running in a Max `[js]` ob
    ```
 
 3. **Parameter Discovery**: Iterates all parameters on a device via `getcount("parameters")`, reading each parameter's `name`, `value`, `min`, `max`, `is_quantized`, `default_value`, and `value_items`.
+
+3b. **LiveAPI Cursor Reuse**: Chain/drum pad discovery uses `LiveAPI.goto()` to navigate a reusable cursor object instead of creating `new LiveAPI()` per iteration. This keeps the total LiveAPI object count at 3 (vs ~193 for a 16-pad drum rack), preventing Max's `[js]` engine from running out of object handles.
 
 4. **Parameter Setting**: Sets any parameter by its LOM index, with value clamping:
    ```javascript
@@ -457,7 +459,7 @@ Navigate inside Instrument Racks, Audio Effect Racks, and Drum Racks. Discover c
 Read and control Simpler's loaded sample properties: start/end markers, warp mode, gain, slicing sensitivity. Manage slices programmatically (insert, remove, clear, reset). Access warp-mode-specific properties (beats granulation, texture flux, complex pro formants, etc.).
 
 ### Wavetable Modulation Matrix (NEW — requires M4L)
-Read and control Wavetable's modulation matrix: set modulation amounts from any source (Env2, Env3, LFO1, LFO2) to any target parameter. Change oscillator wavetable selections, filter routing, unison mode/voices, and polyphony settings.
+Read and control Wavetable's modulation matrix: set modulation amounts from any source (Env2, Env3, LFO1, LFO2) to any target parameter. Change oscillator wavetable selections and effect modes. Voice/unison/filter properties can be read but not written due to a Max for Live LiveAPI limitation (see Known Limitations).
 
 ### Intelligent Preset Generator
 Discover all device parameters, then Claude intelligently sets values based on text descriptions like "bright bass", "warm pad", or "aggressive lead". Auto-snapshots current state for easy revert. **v2.0.0**: Now uses TCP (no M4L needed).
@@ -652,6 +654,7 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 - Clip automation works best with MIDI clips and basic device parameters
 - Arrangement view is limited: clips can be placed via `duplicate_clip_to_arrangement` but not edited directly in arrangement. Arrangement automation is not supported by Ableton's API
 - Extended note properties (probability, velocity_deviation, release_velocity) require Live 11+
+- **Wavetable voice properties**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` can be **read** via `get_wavetable_info` but **cannot be written** via `set_wavetable_properties`. This is a Max for Live `LiveAPI.set()` limitation — these properties are documented in the LOM but `set()` silently fails. Oscillator properties (wavetable category/index, effect modes) work reliably.
 - Always save your work before extensive experimentation
 
 ## Troubleshooting

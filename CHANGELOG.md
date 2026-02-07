@@ -26,6 +26,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 ### M4L Bridge v2.0.0
 - **9 new OSC commands**: `/discover_chains`, `/get_chain_device_params`, `/set_chain_device_param`, `/get_simpler_info`, `/set_simpler_sample_props`, `/simpler_slice`, `/get_wavetable_info`, `/set_wavetable_modulation`, `/set_wavetable_props`
 - **Generic LOM helper**: `discoverParamsAtPath()` enables parameter discovery at arbitrary LOM paths (used by chain device params)
+- **LiveAPI cursor reuse**: `discoverChainsAtPath()` uses `LiveAPI.goto()` to reuse 3 cursor objects instead of creating ~193 per call — prevents Max `[js]` memory exhaustion on large drum racks
 - **OSC packet builders**: All 9 new commands have corresponding builders in `M4LConnection._build_osc_packet()`
 
 ### TCP Port: Snapshot / Restore / Morph / Macros
