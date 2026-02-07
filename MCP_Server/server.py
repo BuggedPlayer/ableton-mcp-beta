@@ -2982,13 +2982,19 @@ def set_device_parameter(ctx: Context, track_index: int, device_index: int,
     """
     Set a device parameter value.
 
+    IMPORTANT: Always call get_device_parameters first to see exact parameter
+    names and their current display_value before setting. Do NOT guess parameter names.
+
     Parameters:
     - track_index: The index of the track containing the device
     - device_index: The index of the device on the track
     - parameter_name: The name of the parameter to set
     - value: The value to set. Can be a number (e.g. 0.5) or a display string
-      for quantized parameters (e.g. "1/4", "Sync", "Bandpass"). Use
-      get_device_parameters to see available display values in value_items.
+      (e.g. "1/4", "Synced", "Bandpass", "1/2"). Display strings work for ALL
+      parameters — both quantized (value_items) and non-quantized (like LFO Rate
+      where 0-21 maps to note values "8", "4", "2", "1", "1/2", "1/4", "1/8" etc).
+      ALWAYS prefer display strings over raw numbers when you know the desired
+      display value — the server resolves them automatically.
     - track_type: Type of track: "track" (default), "return", or "master"
     """
     try:
@@ -3031,14 +3037,19 @@ def set_device_parameters(ctx: Context, track_index: int, device_index: int,
     """
     Set multiple device parameters in a single call (much faster than setting one at a time).
 
+    IMPORTANT: Always call get_device_parameters first to see exact parameter
+    names and their current display_value before setting. Do NOT guess parameter names.
     ALWAYS prefer this over calling set_device_parameter multiple times.
 
     Parameters:
     - track_index: The index of the track containing the device
     - device_index: The index of the device on the track
     - parameters: JSON string of parameter list. Each entry needs "name" and either
-      "value" (numeric) or "value_display" (display string for quantized params).
-      e.g. '[{"name": "Filter Freq", "value": 0.5}, {"name": "LFO Rate", "value_display": "1/4"}]'
+      "value" (numeric) or "value_display" (display string). Display strings work for
+      ALL parameters — quantized and non-quantized. ALWAYS prefer value_display over
+      raw numbers when you know the desired display value.
+      e.g. '[{"name": "Filter Freq", "value": 0.5}, {"name": "LFO Rate", "value_display": "1/4"},
+             {"name": "LFO T Mode", "value_display": "Synced"}]'
     - track_type: Type of track: "track" (default), "return", or "master"
     """
     try:

@@ -36,26 +36,41 @@ def get_device_type(device, ctrl=None):
         return "unknown"
 
 
-def _resolve_display_value_bruteforce(param, display_string):
+def _normalize_display(s):
+    """Remove all whitespace and lowercase for robust display string comparison."""
+    return "".join(s.split()).lower()
+
+
+def _resolve_display_value_bruteforce(param, display_string, ctrl=None):
     """For non-quantized params, find the raw value that produces a display string.
 
     Iterates integer values in [min..max], checks param.str_for_value(v).
     Works for params like LFO Rate (0-21) where each integer = a note value.
+    Uses aggressive normalization (strip all whitespace) for robust matching.
     """
-    target = display_string.strip()
-    target_lower = target.lower()
+    target_norm = _normalize_display(display_string)
 
     lo = int(param.min)
     hi = int(param.max)
+    if ctrl:
+        ctrl.log_message("Bruteforce resolve '{0}' (norm: '{1}') for '{2}' (range {3}-{4})".format(
+            display_string, target_norm, param.name, lo, hi))
+
     for v in range(lo, hi + 1):
         try:
             disp = param.str_for_value(float(v))
             if disp is None:
                 continue
-            disp = disp.strip()
-            if disp == target or disp.lower() == target_lower:
+            disp_norm = _normalize_display(disp)
+            if ctrl:
+                ctrl.log_message("  v={0} -> '{1}' (norm: '{2}')".format(v, disp, disp_norm))
+            if disp_norm == target_norm:
+                if ctrl:
+                    ctrl.log_message("  MATCH at v={0}".format(v))
                 return float(v)
-        except Exception:
+        except Exception as e:
+            if ctrl:
+                ctrl.log_message("  v={0} -> ERROR: {1}".format(v, e))
             continue
 
     raise ValueError("'{0}' not matched for '{1}' (range {2}-{3})".format(
@@ -63,12 +78,16 @@ def _resolve_display_value_bruteforce(param, display_string):
     ))
 
 
-def _resolve_display_value(param, display_string):
+def _resolve_display_value(param, display_string, ctrl=None):
     """Resolve a display string to its raw value.
 
     For quantized params with value_items: direct lookup (fast).
     For non-quantized params: brute-force str_for_value scan.
     """
+    if ctrl:
+        ctrl.log_message("Resolve display '{0}' for param '{1}' (quantized={2})".format(
+            display_string, param.name, param.is_quantized))
+
     # Fast path: quantized with value_items
     if param.is_quantized:
         items = list(param.value_items)
@@ -87,7 +106,7 @@ def _resolve_display_value(param, display_string):
             ))
 
     # Non-quantized: brute-force via str_for_value
-    return _resolve_display_value_bruteforce(param, display_string)
+    return _resolve_display_value_bruteforce(param, display_string, ctrl)
 
 
 def get_device_parameters(song, track_index, device_index, track_type="track", ctrl=None):
@@ -163,7 +182,7 @@ def set_device_parameter(
 
         # Resolve display string to raw value if provided
         if value_display is not None:
-            value = _resolve_display_value(target_param, value_display)
+            value = _resolve_display_value(target_param, value_display, ctrl)
 
         # Clamp value to valid range
         clamped = max(target_param.min, min(target_param.max, value))
@@ -222,8 +241,10 @@ def set_device_parameters_batch(
                 continue
             # Resolve display string if provided
             if value_display is not None:
+                if ctrl:
+                    ctrl.log_message("Batch resolve: '{0}' value_display='{1}'".format(pname, value_display))
                 try:
-                    pvalue = _resolve_display_value(target, value_display)
+                    pvalue = _resolve_display_value(target, value_display, ctrl)
                 except ValueError as ve:
                     results.append({"name": pname, "error": str(ve)})
                     continue
