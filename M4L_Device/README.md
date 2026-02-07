@@ -109,7 +109,7 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 
 | Tool | Description |
 |---|---|
-| `discover_rack_chains(track, device)` | Discover chains, nested devices, and drum pads in Racks |
+| `discover_rack_chains(track, device, chain_path?)` | Discover chains, nested devices, and drum pads in Racks. Use `chain_path` (e.g. `"chains 0 devices 0"`) for nested racks |
 | `get_chain_device_parameters(track, device, chain, chain_device)` | Read all params of a nested device |
 | `set_chain_device_parameter(track, device, chain, chain_device, param, value)` | Set a param on a nested device |
 
@@ -127,7 +127,7 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 |---|---|
 | `get_wavetable_info(track, device)` | Get oscillator wavetables, mod matrix, unison, filter routing |
 | `set_wavetable_modulation(track, device, target, source, amount)` | Set modulation amount (Env2/Env3/LFO1/LFO2 → target) |
-| `set_wavetable_properties(track, device, ...)` | Set wavetable selection, unison, filter routing, voices |
+| `set_wavetable_properties(track, device, ...)` | Set wavetable selection, effect modes (reliable). Unison/filter/voice properties are attempted but may not take effect (M4L limitation) |
 
 ## Troubleshooting
 
@@ -157,7 +157,7 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 | `/set_hidden_param` | `track_idx, device_idx, param_idx, value, request_id` | Set a parameter by LOM index |
 | `/batch_set_hidden_params` | `track_idx, device_idx, params_b64, request_id` | Set multiple params (chunked, base64 JSON) |
 | `/check_dashboard` | `request_id` | Returns dashboard URL and bridge version |
-| `/discover_chains` | `track_idx, device_idx, request_id` | Discover rack chains and drum pads |
+| `/discover_chains` | `track_idx, device_idx, [extra_path], request_id` | Discover rack chains and drum pads. Optional `extra_path` for nested racks |
 | `/get_chain_device_params` | `track_idx, device_idx, chain_idx, chain_device_idx, request_id` | Get nested device params |
 | `/set_chain_device_param` | `track_idx, device_idx, chain_idx, chain_device_idx, param_idx, value, request_id` | Set nested device param |
 | `/get_simpler_info` | `track_idx, device_idx, request_id` | Get Simpler + sample info |
@@ -175,5 +175,8 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 - Parameter indices from the LOM may differ between Ableton Live versions — always use `discover_device_params` first
 - The bridge does not interfere with the Remote Script — both run simultaneously on separate ports
 - **v2.0.0**: Chain navigation uses `LiveAPI` with paths like `live_set tracks T devices D chains C devices CD` for nested access
+- **v2.0.0**: Chain discovery uses `LiveAPI.goto()` to reuse cursor objects instead of creating `new LiveAPI()` per iteration — keeps total at 3 objects vs ~193 for a 16-pad drum rack, preventing Max `[js]` memory exhaustion
+- **v2.0.0**: `discover_rack_chains` accepts optional `chain_path` (e.g. `"chains 0 devices 0"`) to navigate into nested racks
 - **v2.0.0**: Simpler sample access uses path `live_set tracks T devices D sample` for LOM Sample object
 - **v2.0.0**: Wavetable modulation uses `deviceApi.call("get_modulation_value", target, source)` and `set_modulation_value`
+- **v2.0.0**: Wavetable `set()` works for oscillator properties (category, index, effect_mode) but silently fails for voice/unison/filter properties (`unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices`) — these can be read via `get()` but not written. This is a Max for Live `LiveAPI.set()` platform limitation.
