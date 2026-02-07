@@ -62,8 +62,6 @@ def _resolve_display_value_bruteforce(param, display_string, ctrl=None):
             if disp is None:
                 continue
             disp_norm = _normalize_display(disp)
-            if ctrl:
-                ctrl.log_message("  v={0} -> '{1}' (norm: '{2}')".format(v, disp, disp_norm))
             if disp_norm == target_norm:
                 if ctrl:
                     ctrl.log_message("  MATCH at v={0}".format(v))

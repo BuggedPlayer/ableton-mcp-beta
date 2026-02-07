@@ -1666,6 +1666,33 @@ def _m4l_batch_set_params(
     }
 
 
+def _tcp_batch_restore_params(
+    ableton: AbletonConnection,
+    track_index: int,
+    device_index: int,
+    params: List[Dict],
+) -> Dict[str, Any]:
+    """Restore device parameters via TCP using name-based set_device_parameters_batch.
+
+    params: list of dicts with 'name' and 'value' keys.
+    Returns a dict with keys: params_set, params_failed.
+    """
+    param_list = [{"name": p["name"], "value": p["value"]} for p in params if p.get("name")]
+    if not param_list:
+        return {"params_set": 0, "params_failed": 0}
+    try:
+        result = ableton.send_command("set_device_parameters_batch", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "parameters": param_list,
+        })
+        set_count = len(result.get("results", []))
+        return {"params_set": set_count, "params_failed": len(param_list) - set_count}
+    except Exception as e:
+        logger.error(f"TCP batch restore failed: {e}")
+        return {"params_set": 0, "params_failed": len(param_list)}
+
+
 # --- Input validation helpers ---
 
 def _validate_index(value: int, name: str) -> None:
@@ -4068,7 +4095,7 @@ def snapshot_device_state(
     device_index: int,
     snapshot_name: str = ""
 ) -> str:
-    """Capture the complete state of a device (all parameters including hidden ones).
+    """Capture the complete state of a device (all parameters).
 
     Stores the snapshot in memory with a unique ID for later recall.
     Use restore_device_snapshot() to restore a saved state.
@@ -4078,36 +4105,31 @@ def snapshot_device_state(
     - track_index: The index of the track containing the device
     - device_index: The index of the device on the track
     - snapshot_name: Optional human-readable name for the snapshot
-
-    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
     """
     try:
         _validate_index(track_index, "track_index")
         _validate_index(device_index, "device_index")
 
-        m4l = get_m4l_connection()
-        result = m4l.send_command("discover_params", {
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_device_parameters", {
             "track_index": track_index,
-            "device_index": device_index
+            "device_index": device_index,
         })
 
-        if result.get("status") != "success":
-            return f"M4L bridge error: {result.get('message', 'Unknown error')}"
-
-        data = result.get("result", {})
         snapshot_id = str(uuid.uuid4())[:8]
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        params = result.get("parameters", [])
 
         snapshot = {
             "id": snapshot_id,
-            "name": snapshot_name or f"{data.get('device_name', 'Unknown')}_{snapshot_id}",
+            "name": snapshot_name or f"{result.get('device_name', 'Unknown')}_{snapshot_id}",
             "timestamp": timestamp,
             "track_index": track_index,
             "device_index": device_index,
-            "device_name": data.get("device_name", "Unknown"),
-            "device_class": data.get("device_class", "Unknown"),
-            "parameter_count": data.get("parameter_count", 0),
-            "parameters": data.get("parameters", [])
+            "device_name": result.get("device_name", "Unknown"),
+            "device_class": result.get("device_type", "Unknown"),
+            "parameter_count": len(params),
+            "parameters": params
         }
 
         _snapshot_store[snapshot_id] = snapshot
@@ -4145,7 +4167,6 @@ def restore_device_snapshot(
     - track_index: Override target track (-1 = use original track from snapshot)
     - device_index: Override target device (-1 = use original device from snapshot)
 
-    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
     """
     try:
         if snapshot_id not in _snapshot_store:
@@ -4155,13 +4176,13 @@ def restore_device_snapshot(
         target_track = track_index if track_index >= 0 else snapshot["track_index"]
         target_device = device_index if device_index >= 0 else snapshot["device_index"]
 
-        params_to_set = [{"index": p["index"], "value": p["value"]} for p in snapshot["parameters"]]
+        params_to_set = [p for p in snapshot["parameters"] if p.get("name")]
 
         if not params_to_set:
             return "Snapshot contains no parameters to restore."
 
-        m4l = get_m4l_connection()
-        data = _m4l_batch_set_params(m4l, target_track, target_device, params_to_set)
+        ableton = get_ableton_connection()
+        data = _tcp_batch_restore_params(ableton, target_track, target_device, params_to_set)
         ok = data["params_set"]
         failed = data["params_failed"]
         return (
@@ -4169,8 +4190,6 @@ def restore_device_snapshot(
             f"Target: track {target_track}, device {target_device}\n"
             f"Parameters restored: {ok}/{len(params_to_set)} ({failed} failed)"
         )
-    except ConnectionError as e:
-        return f"M4L bridge not available: {e}"
     except Exception as e:
         logger.error(f"Error restoring device snapshot: {str(e)}")
         return f"Error restoring device snapshot: {str(e)}"
@@ -4274,8 +4293,6 @@ def snapshot_all_devices(
     Parameters:
     - track_indices: List of track indices to snapshot
     - snapshot_name: Optional name for the group snapshot
-
-    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
     """
     try:
         if not isinstance(track_indices, list) or len(track_indices) == 0:
@@ -4283,7 +4300,6 @@ def snapshot_all_devices(
         for ti in track_indices:
             _validate_index(ti, "track_index")
 
-        m4l = get_m4l_connection()
         ableton = get_ableton_connection()
         group_id = str(uuid.uuid4())[:8]
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -4295,28 +4311,28 @@ def snapshot_all_devices(
             devices = track_info.get("devices", [])
 
             for di, dev in enumerate(devices):
-                result = m4l.send_command("discover_params", {
-                    "track_index": ti,
-                    "device_index": di
-                })
-
-                if result.get("status") != "success":
+                try:
+                    result = ableton.send_command("get_device_parameters", {
+                        "track_index": ti,
+                        "device_index": di,
+                    })
+                except Exception:
                     continue
 
-                data = result.get("result", {})
+                params = result.get("parameters", [])
                 snap_id = str(uuid.uuid4())[:8]
 
                 _snapshot_store[snap_id] = {
                     "id": snap_id,
                     "group_id": group_id,
-                    "name": f"{data.get('device_name', 'Unknown')}_t{ti}_d{di}",
+                    "name": f"{result.get('device_name', 'Unknown')}_t{ti}_d{di}",
                     "timestamp": timestamp,
                     "track_index": ti,
                     "device_index": di,
-                    "device_name": data.get("device_name", "Unknown"),
-                    "device_class": data.get("device_class", "Unknown"),
-                    "parameter_count": data.get("parameter_count", 0),
-                    "parameters": data.get("parameters", [])
+                    "device_name": result.get("device_name", "Unknown"),
+                    "device_class": result.get("device_type", "Unknown"),
+                    "parameter_count": len(params),
+                    "parameters": params
                 }
                 snapshot_ids.append(snap_id)
                 device_count += 1
@@ -4719,12 +4735,17 @@ def generate_preset(
 ) -> str:
     """Generate an intelligent preset for a device based on a text description.
 
+    IMPORTANT: Make sure device_index points to the correct device. Use
+    get_device_parameters to verify the device name before calling this tool.
+    For sound design prompts (e.g. "warm pad"), target the instrument/synth,
+    not effects like Auto Filter or Reverb.
+
     Discovers all parameters on the target device and returns them so Claude can
     intelligently set values based on the description (e.g., "bright bass",
     "warm pad", "aggressive lead"). The current state is auto-saved as a snapshot
     for easy revert.
 
-    After calling this tool, use batch_set_hidden_parameters() to apply the preset.
+    After calling this tool, use set_device_parameters() to apply the preset values by name.
     Use restore_device_snapshot() with the revert snapshot ID to undo.
 
     Parameters:
@@ -4733,7 +4754,6 @@ def generate_preset(
     - description: Text description of the desired sound (e.g., "bright plucky bass")
     - variation_count: How many variations to suggest (default: 1)
 
-    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
     """
     try:
         _validate_index(track_index, "track_index")
@@ -4741,19 +4761,15 @@ def generate_preset(
         if variation_count < 1 or variation_count > 5:
             raise ValueError("variation_count must be between 1 and 5.")
 
-        m4l = get_m4l_connection()
-        result = m4l.send_command("discover_params", {
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_device_parameters", {
             "track_index": track_index,
-            "device_index": device_index
+            "device_index": device_index,
         })
 
-        if result.get("status") != "success":
-            return f"M4L bridge error: {result.get('message', 'Unknown error')}"
-
-        data = result.get("result", {})
-        device_name = data.get("device_name", "Unknown")
-        device_class = data.get("device_class", "Unknown")
-        params = data.get("parameters", [])
+        device_name = result.get("device_name", "Unknown")
+        device_class = result.get("device_type", "Unknown")
+        params = result.get("parameters", [])
 
         # Auto-snapshot current state for revert
         snapshot_id = str(uuid.uuid4())[:8]
@@ -4784,14 +4800,15 @@ def generate_preset(
                 f"  [{p['index']}] {p.get('name', '?')}: "
                 f"current={p.get('value', '?')} "
                 f"(range: {p.get('min', '?')}-{p.get('max', '?')}"
-                f", default={p.get('default_value', '?')}){quant}{items}\n"
+                f", display={p.get('display_value', '?')}){quant}{items}\n"
             )
 
         output += (
             f"\nNow calculate appropriate values for each parameter based on the description "
             f"'{description}' and device type '{device_class}'. Then call "
-            f"batch_set_hidden_parameters(track_index={track_index}, device_index={device_index}, "
-            f"parameters=[...]) with the calculated values."
+            f"set_device_parameters(track_index={track_index}, device_index={device_index}, "
+            f"parameters=[...]) using parameter names (not indices). For quantized parameters, "
+            f"use value_display with the option name. For continuous parameters, use value with a number."
         )
 
         return output
@@ -5024,8 +5041,8 @@ def grid_to_clip(
                 "clip_index": clip_index,
                 "length": length,
             })
-        except Exception:
-            pass
+        except Exception as e:
+            return f"Error creating clip: {str(e)}"
 
         # Clear existing notes if requested
         if clear_existing:
@@ -5034,8 +5051,8 @@ def grid_to_clip(
                     "track_index": track_index,
                     "clip_index": clip_index,
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                return f"Error clearing clip notes: {str(e)}"
 
         # Add the parsed notes
         ableton.send_command("add_notes_to_clip", {
@@ -5221,18 +5238,6 @@ def get_all_tracks_info(ctx: Context) -> str:
 
 
 @mcp.tool()
-def get_return_tracks_info(ctx: Context) -> str:
-    """Get detailed information about all return tracks (bulk query)."""
-    try:
-        ableton = get_ableton_connection()
-        result = ableton.send_command("get_return_tracks_info")
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        logger.error(f"Error getting return tracks info: {str(e)}")
-        return f"Error getting return tracks info: {str(e)}"
-
-
-@mcp.tool()
 def create_return_track(ctx: Context) -> str:
     """Create a new return track in the session."""
     try:
@@ -5263,42 +5268,6 @@ def set_track_color(ctx: Context, track_index: int, color_index: int) -> str:
         return f"Invalid input: {e}"
     except Exception as e:
         return f"Error setting track color: {str(e)}"
-
-
-@mcp.tool()
-def arm_track(ctx: Context, track_index: int) -> str:
-    """Arm a track for recording.
-
-    Parameters:
-    - track_index: The index of the track to arm
-    """
-    try:
-        _validate_index(track_index, "track_index")
-        ableton = get_ableton_connection()
-        result = ableton.send_command("arm_track", {"track_index": track_index})
-        return f"Track {track_index} armed"
-    except ValueError as e:
-        return f"Invalid input: {e}"
-    except Exception as e:
-        return f"Error arming track: {str(e)}"
-
-
-@mcp.tool()
-def disarm_track(ctx: Context, track_index: int) -> str:
-    """Disarm a track (disable recording).
-
-    Parameters:
-    - track_index: The index of the track to disarm
-    """
-    try:
-        _validate_index(track_index, "track_index")
-        ableton = get_ableton_connection()
-        result = ableton.send_command("disarm_track", {"track_index": track_index})
-        return f"Track {track_index} disarmed"
-    except ValueError as e:
-        return f"Invalid input: {e}"
-    except Exception as e:
-        return f"Error disarming track: {str(e)}"
 
 
 @mcp.tool()
