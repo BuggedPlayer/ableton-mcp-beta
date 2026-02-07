@@ -553,99 +553,44 @@ _singleton_lock_sock: socket.socket = None
 _server_log_buffer: deque = deque(maxlen=200)
 _server_log_lock = threading.Lock()
 
-# Well-known Ableton devices — allows load_instrument_or_effect to accept
-# bare names (e.g. "Reverb") and auto-resolve to the correct URI.
-_WELL_KNOWN_DEVICES: Dict[str, str] = {
-    # --- Instruments ---
-    "analog": "query:Synths#Analog",
-    "collision": "query:Synths#Collision",
-    "drift": "query:Synths#Drift",
-    "electric": "query:Synths#Electric",
-    "external instrument": "query:Synths#External%20Instrument",
-    "instrument rack": "query:Synths#Instrument%20Rack",
-    "meld": "query:Synths#Meld",
-    "operator": "query:Synths#Operator",
-    "sampler": "query:Synths#Sampler",
-    "simpler": "query:Synths#Simpler",
-    "tension": "query:Synths#Tension",
-    "wavetable": "query:Synths#Wavetable",
-    # --- Audio Effects ---
-    "amp": "query:Audio%20Effects#Amp",
-    "audio effect rack": "query:Audio%20Effects#Audio%20Effect%20Rack",
-    "auto filter": "query:Audio%20Effects#Auto%20Filter",
-    "auto pan": "query:Audio%20Effects#Auto%20Pan",
-    "beat repeat": "query:Audio%20Effects#Beat%20Repeat",
-    "cabinet": "query:Audio%20Effects#Cabinet",
-    "channel eq": "query:Audio%20Effects#Channel%20EQ",
-    "chorus-ensemble": "query:Audio%20Effects#Chorus-Ensemble",
-    "compressor": "query:Audio%20Effects#Compressor",
-    "convolution reverb": "query:Audio%20Effects#Convolution%20Reverb",
-    "corpus": "query:Audio%20Effects#Corpus",
-    "delay": "query:Audio%20Effects#Delay",
-    "drum buss": "query:Audio%20Effects#Drum%20Buss",
-    "dynamic tube": "query:Audio%20Effects#Dynamic%20Tube",
-    "echo": "query:Audio%20Effects#Echo",
-    "eq eight": "query:Audio%20Effects#EQ%20Eight",
-    "eq three": "query:Audio%20Effects#EQ%20Three",
-    "erosion": "query:Audio%20Effects#Erosion",
-    "filter delay": "query:Audio%20Effects#Filter%20Delay",
-    "flanger": "query:Audio%20Effects#Flanger",
-    "frequency shifter": "query:Audio%20Effects#Frequency%20Shifter",
-    "gate": "query:Audio%20Effects#Gate",
-    "glue compressor": "query:Audio%20Effects#Glue%20Compressor",
-    "grain delay": "query:Audio%20Effects#Grain%20Delay",
-    "hybrid reverb": "query:Audio%20Effects#Hybrid%20Reverb",
-    "limiter": "query:Audio%20Effects#Limiter",
-    "looper": "query:Audio%20Effects#Looper",
-    "multiband dynamics": "query:Audio%20Effects#Multiband%20Dynamics",
-    "overdrive": "query:Audio%20Effects#Overdrive",
-    "pedal": "query:Audio%20Effects#Pedal",
-    "phaser-flanger": "query:Audio%20Effects#Phaser-Flanger",
-    "redux": "query:Audio%20Effects#Redux",
-    "resonators": "query:Audio%20Effects#Resonators",
-    "reverb": "query:Audio%20Effects#Reverb",
-    "saturator": "query:Audio%20Effects#Saturator",
-    "shifter": "query:Audio%20Effects#Shifter",
-    "spectral resonator": "query:Audio%20Effects#Spectral%20Resonator",
-    "spectral time": "query:Audio%20Effects#Spectral%20Time",
-    "spectrum": "query:Audio%20Effects#Spectrum",
-    "tuner": "query:Audio%20Effects#Tuner",
-    "utility": "query:Audio%20Effects#Utility",
-    "vinyl distortion": "query:Audio%20Effects#Vinyl%20Distortion",
-    "vocoder": "query:Audio%20Effects#Vocoder",
-    # --- MIDI Effects ---
-    "arpeggiator": "query:MIDI%20Effects#Arpeggiator",
-    "chord": "query:MIDI%20Effects#Chord",
-    "midi effect rack": "query:MIDI%20Effects#MIDI%20Effect%20Rack",
-    "note length": "query:MIDI%20Effects#Note%20Length",
-    "pitch": "query:MIDI%20Effects#Pitch",
-    "random": "query:MIDI%20Effects#Random",
-    "scale": "query:MIDI%20Effects#Scale",
-    "velocity": "query:MIDI%20Effects#Velocity",
-}
-
-
 def _resolve_device_uri(uri_or_name: str) -> str:
     """Resolve a device name or URI to a loadable URI.
 
     If the input already looks like a URI (contains ':' or '#'), return as-is.
-    Otherwise, look up the name (case-insensitive) in _WELL_KNOWN_DEVICES.
-    Falls back to browser cache, then passes through as-is.
+    Otherwise, look up the name in the dynamic device URI map built from
+    the browser cache.  Waits for the warmup thread if the map is empty.
     """
     if ":" in uri_or_name or "#" in uri_or_name:
         return uri_or_name
 
-    resolved = _WELL_KNOWN_DEVICES.get(uri_or_name.lower())
+    name_lower = uri_or_name.strip().lower()
+
+    # Fast O(1) lookup in the dynamic device URI map
+    with _browser_cache_lock:
+        resolved = _device_uri_map.get(name_lower)
     if resolved:
         logger.info("Resolved device name '%s' to URI '%s'", uri_or_name, resolved)
         return resolved
 
-    # Fallback: search browser cache for exact name match
-    name_lower = uri_or_name.lower()
+    # Map is empty — wait for warmup thread to populate it (don't trigger a second scan)
+    logger.info("Device map empty, waiting for browser cache warmup...")
+    for _ in range(120):  # 120 * 0.5s = 60s max
+        time.sleep(0.5)
+        with _browser_cache_lock:
+            resolved = _device_uri_map.get(name_lower)
+        if resolved:
+            logger.info("Resolved device name '%s' to URI '%s'", uri_or_name, resolved)
+            return resolved
+        # Stop waiting if cache is populated but name wasn't found
+        with _browser_cache_lock:
+            if _browser_cache_flat and not _browser_cache_populating:
+                break
+
+    # Fallback: linear scan for exact name match
     for item in _browser_cache_flat:
         if item.get("search_name") == name_lower and item.get("is_loadable") and item.get("uri"):
             resolved = item["uri"]
-            logger.info("Resolved device name '%s' via browser cache to URI '%s'", uri_or_name, resolved)
+            logger.info("Resolved device name '%s' via cache scan to URI '%s'", uri_or_name, resolved)
             return resolved
 
     logger.warning("Could not resolve '%s' to a known URI, passing through as-is", uri_or_name)
@@ -716,6 +661,27 @@ _browser_cache_by_category: Dict[str, List[Dict[str, Any]]] = {}  # display_name
 _browser_cache_timestamp: float = 0.0
 _BROWSER_CACHE_TTL = 300.0  # 5 minutes
 _browser_cache_lock = threading.Lock()
+_browser_cache_populating = False  # prevents duplicate scans
+
+# Dynamic device URI map — built from browser cache after each scan.
+# Maps lowercase device name -> correct URI from Ableton's LOM.
+_device_uri_map: Dict[str, str] = {}
+
+# Category priority for resolving name collisions in _device_uri_map.
+# Lower number = higher priority (stock devices beat preset folders).
+_CATEGORY_PRIORITY: Dict[str, int] = {
+    "Instruments": 0,
+    "Audio Effects": 1,
+    "MIDI Effects": 2,
+    "Max for Live": 3,
+    "Plug-ins": 4,
+    "Sounds": 5,
+    "Drums": 6,
+    "Clips": 7,
+    "Samples": 8,
+    "Packs": 9,
+    "User Library": 10,
+}
 
 # Root browser categories: (path_root, display_name)
 # path_root uses the lowercase attribute name so paths work directly with
@@ -726,10 +692,16 @@ _BROWSER_CATEGORIES = [
     ("drums", "Drums"),
     ("audio_effects", "Audio Effects"),
     ("midi_effects", "MIDI Effects"),
+    ("max_for_live", "Max for Live"),
+    ("plugins", "Plug-ins"),
+    ("clips", "Clips"),
+    ("samples", "Samples"),
+    ("packs", "Packs"),
+    ("user_library", "User Library"),
 ]
 
-_BROWSER_CACHE_MAX_DEPTH = 4   # category/instrument/subfolder/preset
-_BROWSER_CACHE_MAX_ITEMS = 5000
+_BROWSER_CACHE_MAX_DEPTH = 3   # category/device/subcategory (skip preset files)
+_BROWSER_CACHE_MAX_ITEMS = 1500
 
 # Maps category keys to display names (used by search_browser and get_browser_tree)
 _CATEGORY_DISPLAY = {
@@ -738,7 +710,42 @@ _CATEGORY_DISPLAY = {
     "drums": "Drums",
     "audio_effects": "Audio Effects",
     "midi_effects": "MIDI Effects",
+    "max_for_live": "Max for Live",
+    "plugins": "Plug-ins",
+    "clips": "Clips",
+    "samples": "Samples",
+    "packs": "Packs",
+    "user_library": "User Library",
 }
+
+
+def _build_device_uri_map(flat_items: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Build a lowercase-name -> URI lookup from the flat browser cache.
+
+    Only includes loadable items with a non-empty URI.
+    For duplicate names, prefers is_device=True items, then higher-priority
+    categories (Instruments > Audio Effects > MIDI Effects > Sounds > Drums).
+    """
+    uri_map: Dict[str, str] = {}
+    quality_map: Dict[str, tuple] = {}
+
+    for item in flat_items:
+        if not item.get("is_loadable") or not item.get("uri"):
+            continue
+
+        name_lower = item.get("search_name", item.get("name", "").lower())
+        if not name_lower:
+            continue
+
+        is_device = item.get("is_device", False)
+        cat_priority = _CATEGORY_PRIORITY.get(item.get("category", ""), 99)
+        new_quality = (is_device, -cat_priority)
+
+        if name_lower not in uri_map or new_quality > quality_map[name_lower]:
+            uri_map[name_lower] = item["uri"]
+            quality_map[name_lower] = new_quality
+
+    return uri_map
 
 
 def _populate_browser_cache(force: bool = False) -> bool:
@@ -752,12 +759,15 @@ def _populate_browser_cache(force: bool = False) -> bool:
     Uses a **dedicated TCP connection** to avoid corrupting the shared global
     connection when the BFS scan sends many rapid commands.
     """
-    global _browser_cache_flat, _browser_cache_by_category, _browser_cache_timestamp
+    global _browser_cache_flat, _browser_cache_by_category, _browser_cache_timestamp, _device_uri_map, _browser_cache_populating
 
     now = time.time()
     with _browser_cache_lock:
         if not force and _browser_cache_flat and (now - _browser_cache_timestamp) < _BROWSER_CACHE_TTL:
             return True  # cache is still fresh
+        if _browser_cache_populating:
+            return True  # another thread is already scanning
+        _browser_cache_populating = True
 
     # Use a dedicated connection so rapid BFS commands don't corrupt the
     # shared global socket (which other tools need concurrently).
@@ -826,15 +836,20 @@ def _populate_browser_cache(force: bool = False) -> bool:
             by_display[display_name] = category_items
             logger.info("Browser cache: '%s' — %d items", display_name, len(category_items))
 
+        device_map = _build_device_uri_map(flat_items)
+
         with _browser_cache_lock:
             _browser_cache_flat = flat_items
             _browser_cache_by_category = by_display
+            _device_uri_map = device_map
             _browser_cache_timestamp = time.time()
 
-        logger.info("Browser cache: populated with %d items across %d categories", total, len(by_display))
+        logger.info("Browser cache: %d items, %d categories, %d device names mapped", total, len(by_display), len(device_map))
         return True
 
     finally:
+        with _browser_cache_lock:
+            _browser_cache_populating = False
         # Always close the dedicated connection when done
         try:
             ableton.disconnect()
@@ -1695,33 +1710,25 @@ def set_tempo(ctx: Context, tempo: float) -> str:
 @mcp.tool()
 def load_instrument_or_effect(ctx: Context, track_index: int, uri: str) -> str:
     """
-    Load an instrument or effect onto a track using its URI or name.
+    Load an instrument or effect onto a track using its URI or device name.
 
     Parameters:
     - track_index: The index of the track to load the instrument on
-    - uri: The URI of the instrument/effect to load, OR a well-known device name.
+    - uri: The URI of the instrument/effect, OR a device name (resolved automatically).
 
-    Well-known device names (pass these directly — no need to search_browser first):
+    You can pass any Ableton instrument, audio effect, or MIDI effect name
+    directly — no need to call search_browser first.  The server resolves the
+    name to the correct URI using the browser cache.
 
-      Instruments: Analog, Collision, Drift, Electric, Meld, Operator, Sampler,
-                   Simpler, Tension, Wavetable, Instrument Rack, External Instrument
-
-      Audio Effects: Amp, Auto Filter, Auto Pan, Beat Repeat, Cabinet, Channel EQ,
-                     Chorus-Ensemble, Compressor, Convolution Reverb, Corpus, Delay,
-                     Drum Buss, Dynamic Tube, Echo, EQ Eight, EQ Three, Erosion,
-                     Filter Delay, Flanger, Frequency Shifter, Gate, Glue Compressor,
-                     Grain Delay, Hybrid Reverb, Limiter, Looper, Multiband Dynamics,
-                     Overdrive, Pedal, Phaser-Flanger, Redux, Resonators, Reverb,
-                     Saturator, Shifter, Spectral Resonator, Spectral Time, Spectrum,
-                     Tuner, Utility, Vinyl Distortion, Vocoder, Audio Effect Rack
-
-      MIDI Effects: Arpeggiator, Chord, Note Length, Pitch, Random, Scale,
-                    Velocity, MIDI Effect Rack
+    Common examples:
+      Instruments: Analog, Drift, Operator, Sampler, Simpler, Wavetable
+      Audio Effects: Reverb, Compressor, EQ Eight, Delay, Auto Filter, Limiter
+      MIDI Effects: Arpeggiator, Chord, Scale, Velocity
 
     Examples:
       load_instrument_or_effect(track_index=0, uri="Analog")
       load_instrument_or_effect(track_index=2, uri="Reverb")
-      load_instrument_or_effect(track_index=1, uri="query:Synths#Operator")
+      load_instrument_or_effect(track_index=1, uri="Compressor")
 
     For presets or third-party items, use search_browser() to find the full URI.
     """
@@ -3174,7 +3181,7 @@ def search_browser(ctx: Context, query: str, category: str = "all") -> str:
 
     Parameters:
     - query: Search string to find items (searches by name)
-    - category: Limit search to category ('all', 'instruments', 'sounds', 'drums', 'audio_effects', 'midi_effects')
+    - category: Limit search to category ('all', 'instruments', 'sounds', 'drums', 'audio_effects', 'midi_effects', 'max_for_live', 'plugins', 'clips', 'samples', 'packs', 'user_library')
     """
     try:
         cache = _get_browser_cache()
@@ -3231,7 +3238,8 @@ def refresh_browser_cache(ctx: Context) -> str:
             with _browser_cache_lock:
                 count = len(_browser_cache_flat)
                 cats = len(_browser_cache_by_category)
-            return f"Browser cache refreshed: {count} items across {cats} categories"
+                devices = len(_device_uri_map)
+            return f"Browser cache refreshed: {count} items across {cats} categories, {devices} device names mapped"
         return "Failed to refresh browser cache. Make sure Ableton is running."
     except Exception as e:
         logger.error("Error refreshing browser cache: %s", e)
