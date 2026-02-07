@@ -302,6 +302,82 @@ class M4LConnection:
                 ("s", params_b64),
                 ("s", request_id),
             ])
+        # --- Phase 2: Chain navigation ---
+        elif command_type == "discover_chains":
+            return self._build_osc_message("/discover_chains", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("s", request_id),
+            ])
+        elif command_type == "get_chain_device_params":
+            return self._build_osc_message("/get_chain_device_params", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("i", params["chain_index"]),
+                ("i", params["chain_device_index"]),
+                ("s", request_id),
+            ])
+        elif command_type == "set_chain_device_param":
+            return self._build_osc_message("/set_chain_device_param", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("i", params["chain_index"]),
+                ("i", params["chain_device_index"]),
+                ("i", params["parameter_index"]),
+                ("f", params["value"]),
+                ("s", request_id),
+            ])
+        # --- Phase 3: Simpler/Sample ---
+        elif command_type == "get_simpler_info":
+            return self._build_osc_message("/get_simpler_info", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("s", request_id),
+            ])
+        elif command_type == "set_simpler_sample_props":
+            props_json = json.dumps(params["properties"], separators=(",", ":"))
+            props_b64 = base64.urlsafe_b64encode(props_json.encode("utf-8")).decode("ascii").rstrip("=")
+            return self._build_osc_message("/set_simpler_sample_props", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("s", props_b64),
+                ("s", request_id),
+            ])
+        elif command_type == "simpler_slice":
+            osc_args = [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("s", params["action"]),
+            ]
+            if params.get("slice_time") is not None:
+                osc_args.append(("f", params["slice_time"]))
+            osc_args.append(("s", request_id))
+            return self._build_osc_message("/simpler_slice", osc_args)
+        # --- Phase 4: Wavetable ---
+        elif command_type == "get_wavetable_info":
+            return self._build_osc_message("/get_wavetable_info", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("s", request_id),
+            ])
+        elif command_type == "set_wavetable_modulation":
+            return self._build_osc_message("/set_wavetable_modulation", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("i", params["target_index"]),
+                ("i", params["source_index"]),
+                ("f", params["amount"]),
+                ("s", request_id),
+            ])
+        elif command_type == "set_wavetable_props":
+            props_json = json.dumps(params["properties"], separators=(",", ":"))
+            props_b64 = base64.urlsafe_b64encode(props_json.encode("utf-8")).decode("ascii").rstrip("=")
+            return self._build_osc_message("/set_wavetable_props", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("s", props_b64),
+                ("s", request_id),
+            ])
         else:
             raise ValueError(f"Unknown M4L command: {command_type}")
 
@@ -4142,8 +4218,6 @@ def snapshot_device_state(
         )
     except ValueError as e:
         return f"Invalid input: {e}"
-    except ConnectionError as e:
-        return f"M4L bridge not available: {e}"
     except Exception as e:
         logger.error(f"Error snapshotting device state: {str(e)}")
         return f"Error capturing device snapshot: {str(e)}"
@@ -4357,8 +4431,6 @@ def snapshot_all_devices(
         )
     except ValueError as e:
         return f"Invalid input: {e}"
-    except ConnectionError as e:
-        return f"M4L bridge not available: {e}"
     except Exception as e:
         logger.error(f"Error snapshotting all devices: {str(e)}")
         return f"Error capturing group snapshot: {str(e)}"
@@ -4373,7 +4445,6 @@ def restore_group_snapshot(ctx: Context, group_id: str) -> str:
     Parameters:
     - group_id: The group snapshot ID (starts with 'group_')
 
-    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
     """
     try:
         if group_id not in _snapshot_store:
@@ -4383,7 +4454,7 @@ def restore_group_snapshot(ctx: Context, group_id: str) -> str:
         if group.get("type") != "group":
             return f"'{group_id}' is not a group snapshot. Use restore_device_snapshot() instead."
 
-        m4l = get_m4l_connection()
+        ableton = get_ableton_connection()
         total_devices = 0
         total_params = 0
         total_failed = 0
@@ -4393,12 +4464,12 @@ def restore_group_snapshot(ctx: Context, group_id: str) -> str:
                 continue
 
             snap = _snapshot_store[snap_id]
-            params_to_set = [{"index": p["index"], "value": p["value"]} for p in snap.get("parameters", [])]
+            params_to_set = [p for p in snap.get("parameters", []) if p.get("name")]
 
             if not params_to_set:
                 continue
 
-            data = _m4l_batch_set_params(m4l, snap["track_index"], snap["device_index"], params_to_set)
+            data = _tcp_batch_restore_params(ableton, snap["track_index"], snap["device_index"], params_to_set)
             total_params += data["params_set"]
             total_failed += data["params_failed"]
             total_devices += 1
@@ -4408,8 +4479,6 @@ def restore_group_snapshot(ctx: Context, group_id: str) -> str:
             f"Devices restored: {total_devices}\n"
             f"Parameters restored: {total_params} ({total_failed} failed)"
         )
-    except ConnectionError as e:
-        return f"M4L bridge not available: {e}"
     except Exception as e:
         logger.error(f"Error restoring group snapshot: {str(e)}")
         return f"Error restoring group snapshot: {str(e)}"
@@ -4506,8 +4575,6 @@ def morph_between_snapshots(
     - position: Morph position (0.0 to 1.0)
     - track_index: Override target track (-1 = use snapshot A's track)
     - device_index: Override target device (-1 = use snapshot A's device)
-
-    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
     """
     try:
         _validate_range(position, "position", 0.0, 1.0)
@@ -4523,17 +4590,17 @@ def morph_between_snapshots(
         target_track = track_index if track_index >= 0 else snap_a["track_index"]
         target_device = device_index if device_index >= 0 else snap_a["device_index"]
 
-        b_by_index = {p["index"]: p for p in snap_b.get("parameters", [])}
+        b_by_name = {p["name"]: p for p in snap_b.get("parameters", []) if p.get("name")}
 
         params_to_set = []
         skipped = 0
         for p_a in snap_a.get("parameters", []):
-            idx = p_a["index"]
-            if idx not in b_by_index:
+            name = p_a.get("name")
+            if not name or name not in b_by_name:
                 skipped += 1
                 continue
 
-            p_b = b_by_index[idx]
+            p_b = b_by_name[name]
             val_a = p_a["value"]
             val_b = p_b["value"]
 
@@ -4542,13 +4609,13 @@ def morph_between_snapshots(
             else:
                 interpolated = val_a + (val_b - val_a) * position
 
-            params_to_set.append({"index": idx, "value": interpolated})
+            params_to_set.append({"name": name, "value": interpolated})
 
         if not params_to_set:
             return "No matching parameters found between the two snapshots."
 
-        m4l = get_m4l_connection()
-        data = _m4l_batch_set_params(m4l, target_track, target_device, params_to_set)
+        ableton = get_ableton_connection()
+        data = _tcp_batch_restore_params(ableton, target_track, target_device, params_to_set)
         ok = data["params_set"]
         return (
                 f"Morph at position {position:.2f} "
@@ -4558,8 +4625,6 @@ def morph_between_snapshots(
             )
     except ValueError as e:
         return f"Invalid input: {e}"
-    except ConnectionError as e:
-        return f"M4L bridge not available: {e}"
     except Exception as e:
         logger.error(f"Error morphing between snapshots: {str(e)}")
         return f"Error during morph: {str(e)}"
@@ -4585,13 +4650,12 @@ def create_macro_controller(
     - mappings: List of parameter mappings, each with:
         - track_index: int
         - device_index: int
-        - parameter_index: int (LOM index from discover_device_params)
+        - parameter_index: int (LOM index from get_device_parameters)
+        - parameter_name: str (optional, name of the parameter for TCP-based control)
         - min_value: float (parameter value when macro = 0.0)
         - max_value: float (parameter value when macro = 1.0)
 
     After creation, use set_macro_value() to control all linked parameters at once.
-
-    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
     """
     try:
         if not isinstance(mappings, list) or len(mappings) == 0:
@@ -4644,8 +4708,6 @@ def set_macro_value(ctx: Context, macro_id: str, value: float) -> str:
     Parameters:
     - macro_id: The ID of the macro controller
     - value: The macro value (0.0 to 1.0)
-
-    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
     """
     try:
         if macro_id not in _macro_store:
@@ -4655,20 +4717,43 @@ def set_macro_value(ctx: Context, macro_id: str, value: float) -> str:
         macro = _macro_store[macro_id]
         macro["current_value"] = value
 
+        ableton = get_ableton_connection()
+
+        # Group mappings by (track, device) for batch operations
         grouped: Dict[tuple, list] = {}
         for m in macro["mappings"]:
             key = (m["track_index"], m["device_index"])
             interpolated = m["min_value"] + (m["max_value"] - m["min_value"]) * value
+
+            # Use parameter_name if available, fall back to index-based lookup
+            param_name = m.get("parameter_name")
+            if not param_name:
+                # Look up the parameter name from the device
+                try:
+                    dev_result = ableton.send_command("get_device_parameters", {
+                        "track_index": m["track_index"],
+                        "device_index": m["device_index"],
+                    })
+                    for p in dev_result.get("parameters", []):
+                        if p.get("index") == m["parameter_index"]:
+                            param_name = p["name"]
+                            m["parameter_name"] = param_name  # Cache for future calls
+                            break
+                except Exception:
+                    pass
+
+            if not param_name:
+                continue
+
             if key not in grouped:
                 grouped[key] = []
-            grouped[key].append({"index": m["parameter_index"], "value": interpolated})
+            grouped[key].append({"name": param_name, "value": interpolated})
 
-        m4l = get_m4l_connection()
         total_set = 0
         total_failed = 0
 
         for (ti, di), params in grouped.items():
-            data = _m4l_batch_set_params(m4l, ti, di, params)
+            data = _tcp_batch_restore_params(ableton, ti, di, params)
             total_set += data["params_set"]
             total_failed += data["params_failed"]
 
@@ -4679,8 +4764,6 @@ def set_macro_value(ctx: Context, macro_id: str, value: float) -> str:
         )
     except ValueError as e:
         return f"Invalid input: {e}"
-    except ConnectionError as e:
-        return f"M4L bridge not available: {e}"
     except Exception as e:
         logger.error(f"Error setting macro value: {str(e)}")
         return f"Error setting macro value: {str(e)}"
@@ -4719,6 +4802,669 @@ def delete_macro(ctx: Context, macro_id: str) -> str:
     name = _macro_store[macro_id]["name"]
     del _macro_store[macro_id]
     return f"Deleted macro controller '{name}' (ID: {macro_id})."
+
+
+# ==========================================================================
+# v2.0.0 — Phase 2: Device Chain Navigation (Racks / Drum Racks)
+# ==========================================================================
+
+@mcp.tool()
+def discover_rack_chains(
+    ctx: Context,
+    track_index: int,
+    device_index: int
+) -> str:
+    """Discover chains and nested devices inside a Rack or Drum Rack.
+
+    For Instrument/Audio Effect Racks: lists all chains and the devices in each chain.
+    For Drum Racks: lists populated drum pads with their note numbers and devices.
+
+    Use this to navigate into nested devices that are not visible at the top level.
+    Then use get_chain_device_parameters() to read params on nested devices.
+
+    Parameters:
+    - track_index: The track containing the rack device
+    - device_index: The index of the rack device on the track
+
+    Requires the AbletonMCP M4L bridge device.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("discover_chains", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+
+        data = result.get("result", result)
+
+        if data.get("error"):
+            return f"Error: {data['error']}"
+
+        if not data.get("can_have_chains"):
+            return (
+                f"Device '{data.get('device_name', '?')}' ({data.get('device_class', '?')}) "
+                f"does not support chains."
+            )
+
+        output = (
+            f"Rack: {data.get('device_name', '?')} ({data.get('device_class', '?')})\n"
+            f"Chain count: {data.get('chain_count', 0)}\n"
+        )
+
+        # Chains
+        for chain in data.get("chains", []):
+            output += f"\n  Chain [{chain['index']}] '{chain.get('name', '')}' — {chain.get('device_count', 0)} device(s):\n"
+            for dev in chain.get("devices", []):
+                nested = " [RACK]" if dev.get("can_have_chains") else ""
+                output += f"    [{dev['index']}] {dev.get('name', '?')} ({dev.get('class_name', '?')}){nested}\n"
+
+        # Drum pads
+        if data.get("has_drum_pads") and data.get("drum_pads"):
+            output += f"\nDrum Pads (populated): {data.get('populated_pad_count', 0)}\n"
+            for pad in data.get("drum_pads", []):
+                note = pad.get("note", "?")
+                name = pad.get("name", "?")
+                muted = " [MUTED]" if pad.get("mute") else ""
+                output += f"  Pad [{pad['index']}] note={note} '{name}'{muted} — {pad.get('chain_count', 0)} chain(s)\n"
+                for dev in pad.get("devices", []):
+                    output += f"    [{dev['index']}] {dev.get('name', '?')} ({dev.get('class_name', '?')})\n"
+
+        return output
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error discovering chains: {str(e)}")
+        return f"Error discovering chains: {str(e)}"
+
+
+@mcp.tool()
+def get_chain_device_parameters(
+    ctx: Context,
+    track_index: int,
+    device_index: int,
+    chain_index: int,
+    chain_device_index: int
+) -> str:
+    """Get all parameters of a device nested inside a rack chain.
+
+    Use discover_rack_chains() first to find the chain/device indices.
+
+    Parameters:
+    - track_index: Track containing the rack
+    - device_index: Index of the rack device
+    - chain_index: Index of the chain within the rack
+    - chain_device_index: Index of the device within the chain
+
+    Requires the AbletonMCP M4L bridge device.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("get_chain_device_params", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "chain_index": chain_index,
+            "chain_device_index": chain_device_index,
+        })
+
+        data = result.get("result", result)
+
+        if data.get("error"):
+            return f"Error: {data['error']}"
+
+        output = (
+            f"Device: {data.get('device_name', '?')} ({data.get('device_class', '?')})\n"
+            f"Location: track {track_index} → device {device_index} → chain {chain_index} → device {chain_device_index}\n"
+            f"Parameters ({data.get('parameter_count', 0)}):\n\n"
+        )
+
+        for p in data.get("parameters", []):
+            quant = " [quantized]" if p.get("is_quantized") else ""
+            items = ""
+            if p.get("value_items"):
+                items = f" items=[{p['value_items']}]"
+            output += (
+                f"  [{p['index']}] {p.get('name', '?')}: "
+                f"{p.get('value', '?')} (range: {p.get('min', '?')}–{p.get('max', '?')}){quant}{items}\n"
+            )
+
+        return output
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error getting chain device params: {str(e)}")
+        return f"Error getting chain device parameters: {str(e)}"
+
+
+@mcp.tool()
+def set_chain_device_parameter(
+    ctx: Context,
+    track_index: int,
+    device_index: int,
+    chain_index: int,
+    chain_device_index: int,
+    parameter_index: int,
+    value: float
+) -> str:
+    """Set a parameter on a device nested inside a rack chain.
+
+    Use get_chain_device_parameters() first to see available parameters.
+
+    Parameters:
+    - track_index: Track containing the rack
+    - device_index: Index of the rack device
+    - chain_index: Index of the chain within the rack
+    - chain_device_index: Index of the device within the chain
+    - parameter_index: LOM index of the parameter
+    - value: The value to set
+
+    Requires the AbletonMCP M4L bridge device.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("set_chain_device_param", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "chain_index": chain_index,
+            "chain_device_index": chain_device_index,
+            "parameter_index": parameter_index,
+            "value": value,
+        })
+
+        data = result.get("result", result)
+
+        if data.get("error"):
+            return f"Error: {data['error']}"
+
+        clamped = " (clamped)" if data.get("was_clamped") else ""
+        return (
+            f"Set '{data.get('parameter_name', '?')}' to {data.get('actual_value', '?')}{clamped}\n"
+            f"Location: track {track_index} → device {device_index} → chain {chain_index} → device {chain_device_index} → param [{parameter_index}]"
+        )
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error setting chain device param: {str(e)}")
+        return f"Error setting chain device parameter: {str(e)}"
+
+
+# ==========================================================================
+# v2.0.0 — Phase 3: Simpler / Sample Deep Access
+# ==========================================================================
+
+@mcp.tool()
+def get_simpler_info(
+    ctx: Context,
+    track_index: int,
+    device_index: int
+) -> str:
+    """Get detailed information about a Simpler device and its loaded sample.
+
+    Returns Simpler playback mode, sample file info, markers, warp settings,
+    slicing data, and warp-mode-specific properties.
+
+    Parameters:
+    - track_index: Track containing the Simpler
+    - device_index: Index of the Simpler device
+
+    Requires the AbletonMCP M4L bridge device.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("get_simpler_info", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+
+        data = result.get("result", result)
+
+        if data.get("error"):
+            return f"Error: {data['error']}"
+
+        playback_modes = {0: "Classic", 1: "One-Shot", 2: "Slicing"}
+        mode = playback_modes.get(data.get("playback_mode"), "Unknown")
+
+        output = (
+            f"Simpler: {data.get('device_name', '?')}\n"
+            f"Playback mode: {mode}\n"
+            f"Voices: {data.get('voices', '?')}\n"
+        )
+
+        sample = data.get("sample")
+        if not sample:
+            output += "\nNo sample loaded.\n"
+            return output
+
+        output += (
+            f"\nSample:\n"
+            f"  File: {sample.get('file_path', '?')}\n"
+            f"  Length: {sample.get('length', '?')} samples"
+        )
+        if sample.get("sample_rate"):
+            duration = sample.get("length", 0) / sample["sample_rate"]
+            output += f" ({duration:.2f}s at {sample['sample_rate']}Hz)"
+        output += "\n"
+
+        output += (
+            f"  Start marker: {sample.get('start_marker', '?')}\n"
+            f"  End marker: {sample.get('end_marker', '?')}\n"
+            f"  Gain: {sample.get('gain', '?')}\n"
+            f"  Warping: {sample.get('warping', '?')}\n"
+            f"  Warp mode: {sample.get('warp_mode_name', '?')}\n"
+        )
+
+        if sample.get("slicing_sensitivity") is not None:
+            output += f"  Slicing sensitivity: {sample['slicing_sensitivity']}\n"
+
+        if sample.get("slices"):
+            output += f"  Slices: {sample['slices']}\n"
+
+        if sample.get("warp_markers"):
+            output += f"  Warp markers: {sample['warp_markers']}\n"
+
+        # Mode-specific properties
+        mode_props = []
+        for key in ["beats_granulation_resolution", "beats_transient_envelope",
+                     "beats_transient_loop_mode", "texture_flux", "texture_grain_size",
+                     "tones_grain_size", "complex_pro_envelope", "complex_pro_formants"]:
+            if sample.get(key) is not None:
+                mode_props.append(f"  {key}: {sample[key]}")
+        if mode_props:
+            output += "\nWarp mode properties:\n" + "\n".join(mode_props) + "\n"
+
+        return output
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error getting Simpler info: {str(e)}")
+        return f"Error getting Simpler info: {str(e)}"
+
+
+@mcp.tool()
+def set_simpler_sample_properties(
+    ctx: Context,
+    track_index: int,
+    device_index: int,
+    start_marker: int = None,
+    end_marker: int = None,
+    warping: bool = None,
+    warp_mode: int = None,
+    slicing_sensitivity: float = None,
+    gain: float = None
+) -> str:
+    """Set properties on a Simpler's loaded sample.
+
+    Settable properties include markers, warping, gain, and warp-mode-specific params.
+    Warp modes: 0=beats, 1=tones, 2=texture, 3=re_pitch, 4=complex, 5=complex_pro, 6=rex
+
+    Parameters:
+    - track_index: Track containing the Simpler
+    - device_index: Index of the Simpler device
+    - start_marker: Sample start position (in samples)
+    - end_marker: Sample end position (in samples)
+    - warping: Enable/disable warping
+    - warp_mode: Warp mode (0-6)
+    - slicing_sensitivity: Sensitivity for auto-slicing (0.0-1.0)
+    - gain: Sample gain
+
+    Requires the AbletonMCP M4L bridge device.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+
+        props = {}
+        if start_marker is not None:
+            props["start_marker"] = start_marker
+        if end_marker is not None:
+            props["end_marker"] = end_marker
+        if warping is not None:
+            props["warping"] = 1 if warping else 0
+        if warp_mode is not None:
+            props["warp_mode"] = warp_mode
+        if slicing_sensitivity is not None:
+            props["slicing_sensitivity"] = slicing_sensitivity
+        if gain is not None:
+            props["gain"] = gain
+
+        if not props:
+            return "No properties specified to set."
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("set_simpler_sample_props", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "properties": props,
+        })
+
+        data = result.get("result", result)
+
+        if data.get("error"):
+            return f"Error: {data['error']}"
+
+        output = f"Set {data.get('properties_set', 0)} sample properties."
+        if data.get("errors"):
+            output += "\nErrors:\n"
+            for err in data["errors"]:
+                output += f"  {err['property']}: {err['error']}\n"
+
+        return output
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error setting Simpler sample props: {str(e)}")
+        return f"Error setting Simpler sample properties: {str(e)}"
+
+
+@mcp.tool()
+def simpler_manage_slices(
+    ctx: Context,
+    track_index: int,
+    device_index: int,
+    action: str,
+    slice_time: float = None
+) -> str:
+    """Manage slices in a Simpler device (Slicing playback mode).
+
+    Actions:
+    - insert: Add a new slice at slice_time (in samples)
+    - remove: Remove the slice at slice_time
+    - clear: Remove all slices
+    - reset: Reset slices to auto-detected positions
+
+    Parameters:
+    - track_index: Track containing the Simpler
+    - device_index: Index of the Simpler device
+    - action: One of "insert", "remove", "clear", "reset"
+    - slice_time: Position in samples (required for insert/remove)
+
+    Requires the AbletonMCP M4L bridge device.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+
+        if action not in ("insert", "remove", "clear", "reset"):
+            return f"Invalid action '{action}'. Use: insert, remove, clear, reset."
+
+        if action in ("insert", "remove") and slice_time is None:
+            return f"Action '{action}' requires slice_time parameter."
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("simpler_slice", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "action": action,
+            "slice_time": slice_time,
+        })
+
+        data = result.get("result", result)
+
+        if data.get("error"):
+            return f"Error: {data['error']}"
+
+        if action == "insert":
+            return f"Inserted slice at sample position {slice_time}"
+        elif action == "remove":
+            return f"Removed slice at sample position {slice_time}"
+        elif action == "clear":
+            return "Cleared all slices."
+        elif action == "reset":
+            return "Reset slices to auto-detected positions."
+
+        return f"Slice action '{action}' completed."
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error managing Simpler slices: {str(e)}")
+        return f"Error managing Simpler slices: {str(e)}"
+
+
+# ==========================================================================
+# v2.0.0 — Phase 4: Wavetable Modulation Matrix
+# ==========================================================================
+
+@mcp.tool()
+def get_wavetable_info(
+    ctx: Context,
+    track_index: int,
+    device_index: int
+) -> str:
+    """Get detailed information about a Wavetable synthesizer device.
+
+    Returns oscillator wavetable selections, modulation matrix state,
+    filter routing, unison settings, and voice configuration.
+
+    Parameters:
+    - track_index: Track containing the Wavetable device
+    - device_index: Index of the Wavetable device
+
+    Requires the AbletonMCP M4L bridge device.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("get_wavetable_info", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+
+        data = result.get("result", result)
+
+        if data.get("error"):
+            return f"Error: {data['error']}"
+
+        mono_poly_map = {0: "Mono", 1: "Poly"}
+        filter_routing_map = {0: "Serial", 1: "Parallel", 2: "Split"}
+        unison_mode_map = {0: "None", 1: "Classic", 2: "Shimmer", 3: "Noise", 4: "Phase Sync", 5: "Position Spread"}
+
+        output = (
+            f"Wavetable: {data.get('device_name', '?')}\n\n"
+            f"Oscillator 1:\n"
+            f"  Wavetable category: {data.get('oscillator_1_wavetable_category', '?')}\n"
+            f"  Wavetable index: {data.get('oscillator_1_wavetable_index', '?')}\n"
+            f"  Effect mode: {data.get('oscillator_1_effect_mode', '?')}\n"
+        )
+
+        if data.get("oscillator_1_wavetables"):
+            output += f"  Available wavetables: {data['oscillator_1_wavetables']}\n"
+
+        output += (
+            f"\nOscillator 2:\n"
+            f"  Wavetable category: {data.get('oscillator_2_wavetable_category', '?')}\n"
+            f"  Wavetable index: {data.get('oscillator_2_wavetable_index', '?')}\n"
+            f"  Effect mode: {data.get('oscillator_2_effect_mode', '?')}\n"
+        )
+
+        if data.get("oscillator_2_wavetables"):
+            output += f"  Available wavetables: {data['oscillator_2_wavetables']}\n"
+
+        if data.get("wavetable_categories"):
+            output += f"\nWavetable categories: {data['wavetable_categories']}\n"
+
+        output += (
+            f"\nVoice settings:\n"
+            f"  Mode: {mono_poly_map.get(data.get('mono_poly'), '?')}\n"
+            f"  Poly voices: {data.get('poly_voices', '?')}\n"
+            f"  Unison mode: {unison_mode_map.get(data.get('unison_mode'), '?')}\n"
+            f"  Unison voices: {data.get('unison_voice_count', '?')}\n"
+            f"  Filter routing: {filter_routing_map.get(data.get('filter_routing'), '?')}\n"
+        )
+
+        # Modulation matrix
+        if data.get("active_modulations"):
+            output += "\nActive modulations:\n"
+            for mod in data["active_modulations"]:
+                sources = mod.get("sources", {})
+                for src_name, amount in sources.items():
+                    output += f"  {src_name} → {mod.get('target_name', '?')}: {amount:.4f}\n"
+
+        if data.get("modulation_target_names"):
+            output += f"\nModulation targets: {data['modulation_target_names']}\n"
+
+        return output
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error getting Wavetable info: {str(e)}")
+        return f"Error getting Wavetable info: {str(e)}"
+
+
+@mcp.tool()
+def set_wavetable_modulation(
+    ctx: Context,
+    track_index: int,
+    device_index: int,
+    target_index: int,
+    source_index: int,
+    amount: float
+) -> str:
+    """Set a modulation amount in a Wavetable device's modulation matrix.
+
+    Sources: 0=Env2, 1=Env3, 2=LFO1, 3=LFO2
+    Target indices can be found via get_wavetable_info() modulation_target_names.
+
+    Parameters:
+    - track_index: Track containing the Wavetable
+    - device_index: Index of the Wavetable device
+    - target_index: Index of the modulation target parameter
+    - source_index: Index of the modulation source (0=Env2, 1=Env3, 2=LFO1, 3=LFO2)
+    - amount: Modulation amount (-1.0 to 1.0)
+
+    Requires the AbletonMCP M4L bridge device.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        _validate_range(amount, "amount", -1.0, 1.0)
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("set_wavetable_modulation", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "target_index": target_index,
+            "source_index": source_index,
+            "amount": amount,
+        })
+
+        data = result.get("result", result)
+
+        if data.get("error"):
+            return f"Error: {data['error']}"
+
+        return (
+            f"Set modulation: {data.get('source_name', '?')} → target [{target_index}] "
+            f"= {data.get('actual_amount', amount)}"
+        )
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error setting Wavetable modulation: {str(e)}")
+        return f"Error setting Wavetable modulation: {str(e)}"
+
+
+@mcp.tool()
+def set_wavetable_properties(
+    ctx: Context,
+    track_index: int,
+    device_index: int,
+    oscillator_1_wavetable_category: int = None,
+    oscillator_1_wavetable_index: int = None,
+    oscillator_2_wavetable_category: int = None,
+    oscillator_2_wavetable_index: int = None,
+    oscillator_1_effect_mode: int = None,
+    oscillator_2_effect_mode: int = None,
+    filter_routing: int = None,
+    mono_poly: int = None,
+    poly_voices: int = None,
+    unison_mode: int = None,
+    unison_voice_count: int = None
+) -> str:
+    """Set properties on a Wavetable device (oscillator, filter, unison, voice settings).
+
+    Use get_wavetable_info() to see available wavetable categories and current values.
+
+    Parameters:
+    - track_index: Track containing the Wavetable
+    - device_index: Index of the Wavetable device
+    - oscillator_1_wavetable_category: Category index for Osc 1
+    - oscillator_1_wavetable_index: Wavetable index within category for Osc 1
+    - oscillator_2_wavetable_category: Category index for Osc 2
+    - oscillator_2_wavetable_index: Wavetable index within category for Osc 2
+    - oscillator_1_effect_mode: Effect mode for Osc 1
+    - oscillator_2_effect_mode: Effect mode for Osc 2
+    - filter_routing: 0=Serial, 1=Parallel, 2=Split
+    - mono_poly: 0=Mono, 1=Poly
+    - poly_voices: Number of polyphony voices
+    - unison_mode: 0=None, 1=Classic, 2=Shimmer, 3=Noise, 4=Phase Sync, 5=Position Spread
+    - unison_voice_count: Number of unison voices
+
+    Requires the AbletonMCP M4L bridge device.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+
+        props = {}
+        local_vars = {
+            "oscillator_1_wavetable_category": oscillator_1_wavetable_category,
+            "oscillator_1_wavetable_index": oscillator_1_wavetable_index,
+            "oscillator_2_wavetable_category": oscillator_2_wavetable_category,
+            "oscillator_2_wavetable_index": oscillator_2_wavetable_index,
+            "oscillator_1_effect_mode": oscillator_1_effect_mode,
+            "oscillator_2_effect_mode": oscillator_2_effect_mode,
+            "filter_routing": filter_routing,
+            "mono_poly": mono_poly,
+            "poly_voices": poly_voices,
+            "unison_mode": unison_mode,
+            "unison_voice_count": unison_voice_count,
+        }
+        for key, val in local_vars.items():
+            if val is not None:
+                props[key] = val
+
+        if not props:
+            return "No properties specified to set."
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("set_wavetable_props", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "properties": props,
+        })
+
+        data = result.get("result", result)
+
+        if data.get("error"):
+            return f"Error: {data['error']}"
+
+        output = f"Set {data.get('properties_set', 0)} Wavetable properties."
+        if data.get("errors"):
+            output += "\nErrors:\n"
+            for err in data["errors"]:
+                output += f"  {err['property']}: {err['error']}\n"
+
+        return output
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error setting Wavetable properties: {str(e)}")
+        return f"Error setting Wavetable properties: {str(e)}"
 
 
 # ==========================================================================

@@ -21,7 +21,7 @@ outlets = 1;
 // Initialization
 // ---------------------------------------------------------------------------
 function loadbang() {
-    post("AbletonMCP Beta M4L Bridge v1.1.0 starting...\n");
+    post("AbletonMCP Beta M4L Bridge v2.0.0 starting...\n");
     post("Listening for OSC commands on port 9878.\n");
     post("Dashboard: http://127.0.0.1:9880\n");
 }
@@ -68,6 +68,45 @@ function anything() {
 
         case "check_dashboard":
             handleCheckDashboard(args);
+            break;
+
+        // --- Phase 2: Device Chain Navigation ---
+        case "discover_chains":
+            handleDiscoverChains(args);
+            break;
+
+        case "get_chain_device_params":
+            handleGetChainDeviceParams(args);
+            break;
+
+        case "set_chain_device_param":
+            handleSetChainDeviceParam(args);
+            break;
+
+        // --- Phase 3: Simpler/Sample Deep Access ---
+        case "get_simpler_info":
+            handleGetSimplerInfo(args);
+            break;
+
+        case "set_simpler_sample_props":
+            handleSetSimplerSampleProps(args);
+            break;
+
+        case "simpler_slice":
+            handleSimplerSlice(args);
+            break;
+
+        // --- Phase 4: Wavetable Modulation ---
+        case "get_wavetable_info":
+            handleGetWavetableInfo(args);
+            break;
+
+        case "set_wavetable_modulation":
+            handleSetWavetableModulation(args);
+            break;
+
+        case "set_wavetable_props":
+            handleSetWavetableProps(args);
             break;
 
         default:
@@ -316,6 +355,746 @@ function handleCheckDashboard(args) {
         id: requestId
     };
     sendResponse(JSON.stringify(response));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Device Chain Navigation
+//
+// Racks (Instrument Rack, Audio Effect Rack, Drum Rack) contain chains,
+// each chain contains devices. Drum Racks also have drum_pads with chains.
+// LOM paths:
+//   live_set tracks T devices D chains C
+//   live_set tracks T devices D chains C devices CD
+//   live_set tracks T devices D drum_pads N chains C devices CD
+// ---------------------------------------------------------------------------
+
+function handleDiscoverChains(args) {
+    // args: [track_index (int), device_index (int), request_id (string)]
+    if (args.length < 3) {
+        sendError("discover_chains requires track_index, device_index, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var requestId = args[2].toString();
+
+    var result = discoverChains(trackIdx, deviceIdx);
+    sendResult(result, requestId);
+}
+
+function discoverChains(trackIdx, deviceIdx) {
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    var deviceApi  = new LiveAPI(null, devicePath);
+
+    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
+        return { error: "No device found at track " + trackIdx + " device " + deviceIdx };
+    }
+
+    var deviceName  = deviceApi.get("name").toString();
+    var deviceClass = deviceApi.get("class_name").toString();
+
+    // Check if this device can have chains
+    var canHaveChains = false;
+    try { canHaveChains = (parseInt(deviceApi.get("can_have_chains")) === 1); } catch (e) {}
+
+    var hasDrumPads = false;
+    try { hasDrumPads = (parseInt(deviceApi.get("can_have_drum_pads")) === 1); } catch (e) {}
+
+    if (!canHaveChains) {
+        return {
+            device_name: deviceName,
+            device_class: deviceClass,
+            can_have_chains: false,
+            has_drum_pads: false,
+            message: "This device does not support chains."
+        };
+    }
+
+    var result = {
+        device_name: deviceName,
+        device_class: deviceClass,
+        can_have_chains: true,
+        has_drum_pads: hasDrumPads
+    };
+
+    // Enumerate chains
+    var chainCount = 0;
+    try { chainCount = parseInt(deviceApi.getcount("chains")); } catch (e) {}
+
+    var chains = [];
+    for (var c = 0; c < chainCount; c++) {
+        var chainPath = devicePath + " chains " + c;
+        var chainApi  = new LiveAPI(null, chainPath);
+        if (!chainApi || !chainApi.id || parseInt(chainApi.id) === 0) continue;
+
+        var chainInfo = {
+            index: c,
+            name: ""
+        };
+        try { chainInfo.name = chainApi.get("name").toString(); } catch (e) {}
+
+        // Enumerate devices in this chain
+        var devCount = 0;
+        try { devCount = parseInt(chainApi.getcount("devices")); } catch (e) {}
+
+        var chainDevices = [];
+        for (var d = 0; d < devCount; d++) {
+            var cdPath = chainPath + " devices " + d;
+            var cdApi  = new LiveAPI(null, cdPath);
+            if (!cdApi || !cdApi.id || parseInt(cdApi.id) === 0) continue;
+
+            var cdInfo = { index: d, name: "", class_name: "" };
+            try { cdInfo.name = cdApi.get("name").toString(); } catch (e) {}
+            try { cdInfo.class_name = cdApi.get("class_name").toString(); } catch (e) {}
+            try { cdInfo.can_have_chains = (parseInt(cdApi.get("can_have_chains")) === 1); } catch (e) {}
+            chainDevices.push(cdInfo);
+        }
+        chainInfo.devices = chainDevices;
+        chainInfo.device_count = chainDevices.length;
+        chains.push(chainInfo);
+    }
+    result.chains = chains;
+    result.chain_count = chains.length;
+
+    // Enumerate drum pads (only if this is a Drum Rack)
+    if (hasDrumPads) {
+        var drumPads = [];
+        var padCount = 0;
+        try { padCount = parseInt(deviceApi.getcount("drum_pads")); } catch (e) {}
+
+        for (var p = 0; p < padCount; p++) {
+            var padPath = devicePath + " drum_pads " + p;
+            var padApi  = new LiveAPI(null, padPath);
+            if (!padApi || !padApi.id || parseInt(padApi.id) === 0) continue;
+
+            // Only include pads that have chains (i.e. have content)
+            var padChainCount = 0;
+            try { padChainCount = parseInt(padApi.getcount("chains")); } catch (e) {}
+            if (padChainCount === 0) continue;
+
+            var padInfo = { index: p, name: "", note: -1, chain_count: padChainCount };
+            try { padInfo.name = padApi.get("name").toString(); } catch (e) {}
+            try { padInfo.note = parseInt(padApi.get("note")); } catch (e) {}
+            try { padInfo.mute = (parseInt(padApi.get("mute")) === 1); } catch (e) {}
+            try { padInfo.solo = (parseInt(padApi.get("solo")) === 1); } catch (e) {}
+
+            // Get devices in the first chain of this pad
+            if (padChainCount > 0) {
+                var padChainPath = padPath + " chains 0";
+                var padChainApi  = new LiveAPI(null, padChainPath);
+                var padDevCount = 0;
+                try { padDevCount = parseInt(padChainApi.getcount("devices")); } catch (e) {}
+                var padDevices = [];
+                for (var pd = 0; pd < padDevCount; pd++) {
+                    var pdPath = padChainPath + " devices " + pd;
+                    var pdApi  = new LiveAPI(null, pdPath);
+                    if (!pdApi || !pdApi.id || parseInt(pdApi.id) === 0) continue;
+                    var pdInfo = { index: pd, name: "", class_name: "" };
+                    try { pdInfo.name = pdApi.get("name").toString(); } catch (e) {}
+                    try { pdInfo.class_name = pdApi.get("class_name").toString(); } catch (e) {}
+                    padDevices.push(pdInfo);
+                }
+                padInfo.devices = padDevices;
+            }
+
+            drumPads.push(padInfo);
+        }
+        result.drum_pads = drumPads;
+        result.populated_pad_count = drumPads.length;
+    }
+
+    return result;
+}
+
+function handleGetChainDeviceParams(args) {
+    // args: [track_index, device_index, chain_index, chain_device_index, request_id]
+    if (args.length < 5) {
+        sendError("get_chain_device_params requires track_index, device_index, chain_index, chain_device_index, request_id", "");
+        return;
+    }
+    var trackIdx      = parseInt(args[0]);
+    var deviceIdx     = parseInt(args[1]);
+    var chainIdx      = parseInt(args[2]);
+    var chainDevIdx   = parseInt(args[3]);
+    var requestId     = args[4].toString();
+
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx
+                   + " chains " + chainIdx + " devices " + chainDevIdx;
+    var result = discoverParamsAtPath(devicePath);
+    sendResult(result, requestId);
+}
+
+function handleSetChainDeviceParam(args) {
+    // args: [track_index, device_index, chain_index, chain_device_index, param_index, value, request_id]
+    if (args.length < 7) {
+        sendError("set_chain_device_param requires track_index, device_index, chain_index, chain_device_index, param_index, value, request_id", "");
+        return;
+    }
+    var trackIdx      = parseInt(args[0]);
+    var deviceIdx     = parseInt(args[1]);
+    var chainIdx      = parseInt(args[2]);
+    var chainDevIdx   = parseInt(args[3]);
+    var paramIdx      = parseInt(args[4]);
+    var value         = parseFloat(args[5]);
+    var requestId     = args[6].toString();
+
+    var paramPath = "live_set tracks " + trackIdx + " devices " + deviceIdx
+                  + " chains " + chainIdx + " devices " + chainDevIdx
+                  + " parameters " + paramIdx;
+
+    var paramApi = new LiveAPI(null, paramPath);
+    if (!paramApi || !paramApi.id || parseInt(paramApi.id) === 0) {
+        sendError("No parameter found at path: " + paramPath, requestId);
+        return;
+    }
+
+    try {
+        var paramName = paramApi.get("name").toString();
+        var minVal    = parseFloat(paramApi.get("min"));
+        var maxVal    = parseFloat(paramApi.get("max"));
+        var clamped   = Math.max(minVal, Math.min(maxVal, value));
+        paramApi.set("value", clamped);
+        var actualValue = parseFloat(paramApi.get("value"));
+
+        sendResult({
+            parameter_name:  paramName,
+            parameter_index: paramIdx,
+            requested_value: value,
+            actual_value:    actualValue,
+            was_clamped:     (clamped !== value)
+        }, requestId);
+    } catch (e) {
+        sendError("Failed to set chain device parameter: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Simpler / Sample Deep Access
+//
+// SimplerDevice has a 'sample' child object (LOM Sample) with properties:
+//   start_marker, end_marker, file_path, gain, length, sample_rate,
+//   slices, slicing_sensitivity, warp_markers, warp_mode, warping, etc.
+// Functions: insert_slice, move_slice, remove_slice, clear_slices, reset_slices
+// SimplerDevice props: playback_mode, multi_sample_mode, voices
+// SimplerDevice funcs: crop, reverse, warp_as, warp_double, warp_half
+// ---------------------------------------------------------------------------
+
+function handleGetSimplerInfo(args) {
+    // args: [track_index, device_index, request_id]
+    if (args.length < 3) {
+        sendError("get_simpler_info requires track_index, device_index, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var requestId = args[2].toString();
+
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    var deviceApi  = new LiveAPI(null, devicePath);
+
+    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
+        sendError("No device found at track " + trackIdx + " device " + deviceIdx, requestId);
+        return;
+    }
+
+    var className = "";
+    try { className = deviceApi.get("class_name").toString(); } catch (e) {}
+
+    if (className !== "OriginalSimpler") {
+        sendError("Device is not a Simpler (class: " + className + ")", requestId);
+        return;
+    }
+
+    var result = {
+        device_name: "",
+        device_class: className
+    };
+    try { result.device_name = deviceApi.get("name").toString(); } catch (e) {}
+
+    // SimplerDevice properties
+    try { result.playback_mode = parseInt(deviceApi.get("playback_mode")); } catch (e) {}
+    try { result.multi_sample_mode = parseInt(deviceApi.get("multi_sample_mode")); } catch (e) {}
+    try { result.pad_slicing = parseInt(deviceApi.get("pad_slicing")); } catch (e) {}
+    try { result.retrigger = (parseInt(deviceApi.get("retrigger")) === 1); } catch (e) {}
+    try { result.voices = parseInt(deviceApi.get("voices")); } catch (e) {}
+
+    // Sample child
+    var samplePath = devicePath + " sample";
+    var sampleApi;
+    try {
+        sampleApi = new LiveAPI(null, samplePath);
+    } catch (e) {
+        result.sample = null;
+        result.message = "No sample loaded";
+        sendResult(result, requestId);
+        return;
+    }
+
+    if (!sampleApi || !sampleApi.id || parseInt(sampleApi.id) === 0) {
+        result.sample = null;
+        result.message = "No sample loaded";
+        sendResult(result, requestId);
+        return;
+    }
+
+    var sample = {};
+    try { sample.file_path         = sampleApi.get("file_path").toString(); } catch (e) {}
+    try { sample.length            = parseInt(sampleApi.get("length")); } catch (e) {}
+    try { sample.sample_rate       = parseInt(sampleApi.get("sample_rate")); } catch (e) {}
+    try { sample.start_marker      = parseInt(sampleApi.get("start_marker")); } catch (e) {}
+    try { sample.end_marker        = parseInt(sampleApi.get("end_marker")); } catch (e) {}
+    try { sample.gain              = parseFloat(sampleApi.get("gain")); } catch (e) {}
+    try { sample.warping           = (parseInt(sampleApi.get("warping")) === 1); } catch (e) {}
+    try { sample.warp_mode         = parseInt(sampleApi.get("warp_mode")); } catch (e) {}
+    try { sample.slicing_sensitivity = parseFloat(sampleApi.get("slicing_sensitivity")); } catch (e) {}
+
+    // Warp mode name mapping
+    var warpModeMap = { 0: "beats", 1: "tones", 2: "texture", 3: "re_pitch", 4: "complex", 5: "complex_pro", 6: "rex" };
+    if (sample.warp_mode !== undefined) {
+        sample.warp_mode_name = warpModeMap[sample.warp_mode] || "unknown";
+    }
+
+    // Read slices
+    try {
+        var slicesRaw = sampleApi.get("slices");
+        if (slicesRaw) {
+            var sliceStr = slicesRaw.toString();
+            if (sliceStr && sliceStr !== "null" && sliceStr !== "") {
+                sample.slices = sliceStr;
+            }
+        }
+    } catch (e) {}
+
+    // Read warp markers
+    try {
+        var markersRaw = sampleApi.get("warp_markers");
+        if (markersRaw) {
+            var markerStr = markersRaw.toString();
+            if (markerStr && markerStr !== "null" && markerStr !== "") {
+                sample.warp_markers = markerStr;
+            }
+        }
+    } catch (e) {}
+
+    // Beats-specific properties
+    try { sample.beats_granulation_resolution  = parseInt(sampleApi.get("beats_granulation_resolution")); } catch (e) {}
+    try { sample.beats_transient_envelope      = parseInt(sampleApi.get("beats_transient_envelope")); } catch (e) {}
+    try { sample.beats_transient_loop_mode     = parseInt(sampleApi.get("beats_transient_loop_mode")); } catch (e) {}
+    // Texture-specific
+    try { sample.texture_flux       = parseFloat(sampleApi.get("texture_flux")); } catch (e) {}
+    try { sample.texture_grain_size = parseFloat(sampleApi.get("texture_grain_size")); } catch (e) {}
+    // Tones-specific
+    try { sample.tones_grain_size   = parseFloat(sampleApi.get("tones_grain_size")); } catch (e) {}
+    // Complex Pro specific
+    try { sample.complex_pro_envelope  = parseFloat(sampleApi.get("complex_pro_envelope")); } catch (e) {}
+    try { sample.complex_pro_formants  = parseFloat(sampleApi.get("complex_pro_formants")); } catch (e) {}
+
+    result.sample = sample;
+    sendResult(result, requestId);
+}
+
+function handleSetSimplerSampleProps(args) {
+    // args: [track_index, device_index, props_json_b64, request_id]
+    if (args.length < 4) {
+        sendError("set_simpler_sample_props requires track_index, device_index, props_json_b64, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var requestId = args[args.length - 1].toString();
+
+    // Reassemble b64 payload (Max may split long strings)
+    var b64Parts = [];
+    for (var a = 2; a < args.length - 1; a++) {
+        b64Parts.push(args[a].toString());
+    }
+    var propsB64 = b64Parts.join("");
+
+    var propsJson;
+    try { propsJson = _base64decode(propsB64); } catch (e) {
+        sendError("Failed to decode props_json_b64: " + e.toString(), requestId);
+        return;
+    }
+    var props;
+    try { props = JSON.parse(propsJson); } catch (e) {
+        sendError("Failed to parse props JSON: " + e.toString(), requestId);
+        return;
+    }
+
+    var samplePath = "live_set tracks " + trackIdx + " devices " + deviceIdx + " sample";
+    var sampleApi;
+    try {
+        sampleApi = new LiveAPI(null, samplePath);
+    } catch (e) {
+        sendError("No sample found: " + e.toString(), requestId);
+        return;
+    }
+
+    if (!sampleApi || !sampleApi.id || parseInt(sampleApi.id) === 0) {
+        sendError("No sample loaded in Simpler at track " + trackIdx + " device " + deviceIdx, requestId);
+        return;
+    }
+
+    // Settable sample properties
+    var settable = [
+        "start_marker", "end_marker", "warping", "warp_mode",
+        "slicing_sensitivity", "gain",
+        "beats_granulation_resolution", "beats_transient_envelope", "beats_transient_loop_mode",
+        "texture_flux", "texture_grain_size", "tones_grain_size",
+        "complex_pro_envelope", "complex_pro_formants"
+    ];
+
+    var setCount = 0;
+    var errors = [];
+    for (var key in props) {
+        if (!props.hasOwnProperty(key)) continue;
+        var found = false;
+        for (var s = 0; s < settable.length; s++) {
+            if (settable[s] === key) { found = true; break; }
+        }
+        if (!found) {
+            errors.push({ property: key, error: "not a settable property" });
+            continue;
+        }
+        try {
+            sampleApi.set(key, props[key]);
+            setCount++;
+        } catch (e) {
+            errors.push({ property: key, error: e.toString() });
+        }
+    }
+
+    var result = { properties_set: setCount };
+    if (errors.length > 0) result.errors = errors;
+    sendResult(result, requestId);
+}
+
+function handleSimplerSlice(args) {
+    // args: [track_index, device_index, action ("insert"|"remove"|"clear"|"reset"), slice_time (float, for insert/remove), request_id]
+    if (args.length < 4) {
+        sendError("simpler_slice requires track_index, device_index, action, request_id (slice_time for insert/remove)", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var action    = args[2].toString();
+
+    var sliceTime = 0;
+    var requestId;
+    if (action === "insert" || action === "remove" || action === "move") {
+        if (args.length < 5) {
+            sendError("simpler_slice " + action + " requires slice_time and request_id", "");
+            return;
+        }
+        sliceTime = parseFloat(args[3]);
+        requestId = args[args.length - 1].toString();
+    } else {
+        requestId = args[args.length - 1].toString();
+    }
+
+    var samplePath = "live_set tracks " + trackIdx + " devices " + deviceIdx + " sample";
+    var sampleApi;
+    try {
+        sampleApi = new LiveAPI(null, samplePath);
+    } catch (e) {
+        sendError("No sample found: " + e.toString(), requestId);
+        return;
+    }
+
+    if (!sampleApi || !sampleApi.id || parseInt(sampleApi.id) === 0) {
+        sendError("No sample loaded in Simpler", requestId);
+        return;
+    }
+
+    try {
+        switch (action) {
+            case "insert":
+                sampleApi.call("insert_slice", sliceTime);
+                sendResult({ action: "insert", slice_time: sliceTime }, requestId);
+                break;
+            case "remove":
+                sampleApi.call("remove_slice", sliceTime);
+                sendResult({ action: "remove", slice_time: sliceTime }, requestId);
+                break;
+            case "clear":
+                sampleApi.call("clear_slices");
+                sendResult({ action: "clear" }, requestId);
+                break;
+            case "reset":
+                sampleApi.call("reset_slices");
+                sendResult({ action: "reset" }, requestId);
+                break;
+            default:
+                sendError("Unknown slice action: " + action + " (use insert, remove, clear, reset)", requestId);
+                break;
+        }
+    } catch (e) {
+        sendError("Slice operation failed: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: Wavetable Modulation Matrix
+//
+// WavetableDevice (class_name "InstrumentVector") has:
+//   Properties: filter_routing, mono_poly, poly_voices,
+//     oscillator_1/2_effect_mode, oscillator_1/2_wavetable_category,
+//     oscillator_1/2_wavetable_index, oscillator_1/2_wavetables (list),
+//     oscillator_wavetable_categories (list), unison_mode, unison_voice_count,
+//     visible_modulation_target_names (list)
+//   Functions:
+//     get_modulation_value(target_idx, source_idx) -> float
+//     set_modulation_value(target_idx, source_idx, value)
+//     add_parameter_to_modulation_matrix(parameter)
+//     is_parameter_modulatable(parameter) -> bool
+//     get_modulation_target_parameter_name(idx) -> string
+// ---------------------------------------------------------------------------
+
+function handleGetWavetableInfo(args) {
+    // args: [track_index, device_index, request_id]
+    if (args.length < 3) {
+        sendError("get_wavetable_info requires track_index, device_index, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var requestId = args[2].toString();
+
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    var deviceApi  = new LiveAPI(null, devicePath);
+
+    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
+        sendError("No device found at track " + trackIdx + " device " + deviceIdx, requestId);
+        return;
+    }
+
+    var className = "";
+    try { className = deviceApi.get("class_name").toString(); } catch (e) {}
+
+    if (className !== "InstrumentVector") {
+        sendError("Device is not a Wavetable (class: " + className + ")", requestId);
+        return;
+    }
+
+    var result = {
+        device_name: "",
+        device_class: className
+    };
+    try { result.device_name = deviceApi.get("name").toString(); } catch (e) {}
+
+    // Oscillator settings
+    try { result.oscillator_1_effect_mode = parseInt(deviceApi.get("oscillator_1_effect_mode")); } catch (e) {}
+    try { result.oscillator_2_effect_mode = parseInt(deviceApi.get("oscillator_2_effect_mode")); } catch (e) {}
+    try { result.oscillator_1_wavetable_category = parseInt(deviceApi.get("oscillator_1_wavetable_category")); } catch (e) {}
+    try { result.oscillator_1_wavetable_index    = parseInt(deviceApi.get("oscillator_1_wavetable_index")); } catch (e) {}
+    try { result.oscillator_2_wavetable_category = parseInt(deviceApi.get("oscillator_2_wavetable_category")); } catch (e) {}
+    try { result.oscillator_2_wavetable_index    = parseInt(deviceApi.get("oscillator_2_wavetable_index")); } catch (e) {}
+
+    // Wavetable lists
+    try {
+        var cats = deviceApi.get("oscillator_wavetable_categories");
+        if (cats) result.wavetable_categories = cats.toString();
+    } catch (e) {}
+
+    try {
+        var wt1 = deviceApi.get("oscillator_1_wavetables");
+        if (wt1) result.oscillator_1_wavetables = wt1.toString();
+    } catch (e) {}
+
+    try {
+        var wt2 = deviceApi.get("oscillator_2_wavetables");
+        if (wt2) result.oscillator_2_wavetables = wt2.toString();
+    } catch (e) {}
+
+    // Voice / unison
+    try { result.filter_routing     = parseInt(deviceApi.get("filter_routing")); } catch (e) {}
+    try { result.mono_poly          = parseInt(deviceApi.get("mono_poly")); } catch (e) {}
+    try { result.poly_voices        = parseInt(deviceApi.get("poly_voices")); } catch (e) {}
+    try { result.unison_mode        = parseInt(deviceApi.get("unison_mode")); } catch (e) {}
+    try { result.unison_voice_count = parseInt(deviceApi.get("unison_voice_count")); } catch (e) {}
+
+    // Modulation targets
+    try {
+        var targetNames = deviceApi.get("visible_modulation_target_names");
+        if (targetNames) result.modulation_target_names = targetNames.toString();
+    } catch (e) {}
+
+    // Read current modulation matrix values for visible targets
+    // Sources: 0=Env2, 1=Env3, 2=LFO1, 3=LFO2 (standard Wavetable layout)
+    try {
+        var targetNamesArr = result.modulation_target_names;
+        if (targetNamesArr) {
+            var names = targetNamesArr.split(",");
+            var modMatrix = [];
+            for (var t = 0; t < names.length && t < 50; t++) {
+                var row = { target_index: t, target_name: names[t] };
+                var hasValue = false;
+                for (var src = 0; src < 4; src++) {
+                    try {
+                        var modVal = deviceApi.call("get_modulation_value", t, src);
+                        if (modVal !== undefined && modVal !== null) {
+                            var fVal = parseFloat(modVal);
+                            if (fVal !== 0.0) {
+                                if (!row.sources) row.sources = {};
+                                var srcName = ["Env2", "Env3", "LFO1", "LFO2"][src];
+                                row.sources[srcName] = fVal;
+                                hasValue = true;
+                            }
+                        }
+                    } catch (e) {}
+                }
+                if (hasValue) modMatrix.push(row);
+            }
+            if (modMatrix.length > 0) result.active_modulations = modMatrix;
+        }
+    } catch (e) {}
+
+    sendResult(result, requestId);
+}
+
+function handleSetWavetableModulation(args) {
+    // args: [track_index, device_index, target_index, source_index, amount, request_id]
+    if (args.length < 6) {
+        sendError("set_wavetable_modulation requires track_index, device_index, target_index, source_index, amount, request_id", "");
+        return;
+    }
+    var trackIdx    = parseInt(args[0]);
+    var deviceIdx   = parseInt(args[1]);
+    var targetIdx   = parseInt(args[2]);
+    var sourceIdx   = parseInt(args[3]);
+    var amount      = parseFloat(args[4]);
+    var requestId   = args[5].toString();
+
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    var deviceApi  = new LiveAPI(null, devicePath);
+
+    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
+        sendError("No device found", requestId);
+        return;
+    }
+
+    try {
+        deviceApi.call("set_modulation_value", targetIdx, sourceIdx, amount);
+
+        // Read back the value to confirm
+        var actualVal = parseFloat(deviceApi.call("get_modulation_value", targetIdx, sourceIdx));
+        var srcNames = ["Env2", "Env3", "LFO1", "LFO2"];
+
+        sendResult({
+            target_index: targetIdx,
+            source_index: sourceIdx,
+            source_name:  srcNames[sourceIdx] || ("Source " + sourceIdx),
+            requested_amount: amount,
+            actual_amount: actualVal
+        }, requestId);
+    } catch (e) {
+        sendError("Failed to set modulation: " + e.toString(), requestId);
+    }
+}
+
+function handleSetWavetableProps(args) {
+    // args: [track_index, device_index, props_json_b64, request_id]
+    if (args.length < 4) {
+        sendError("set_wavetable_props requires track_index, device_index, props_json_b64, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var requestId = args[args.length - 1].toString();
+
+    var b64Parts = [];
+    for (var a = 2; a < args.length - 1; a++) {
+        b64Parts.push(args[a].toString());
+    }
+    var propsB64 = b64Parts.join("");
+
+    var propsJson;
+    try { propsJson = _base64decode(propsB64); } catch (e) {
+        sendError("Failed to decode props_json_b64: " + e.toString(), requestId);
+        return;
+    }
+    var props;
+    try { props = JSON.parse(propsJson); } catch (e) {
+        sendError("Failed to parse props JSON: " + e.toString(), requestId);
+        return;
+    }
+
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    var deviceApi  = new LiveAPI(null, devicePath);
+
+    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
+        sendError("No device found", requestId);
+        return;
+    }
+
+    var settable = [
+        "filter_routing", "mono_poly", "poly_voices",
+        "oscillator_1_effect_mode", "oscillator_2_effect_mode",
+        "oscillator_1_wavetable_category", "oscillator_1_wavetable_index",
+        "oscillator_2_wavetable_category", "oscillator_2_wavetable_index",
+        "unison_mode", "unison_voice_count"
+    ];
+
+    var setCount = 0;
+    var errors = [];
+    for (var key in props) {
+        if (!props.hasOwnProperty(key)) continue;
+        var found = false;
+        for (var s = 0; s < settable.length; s++) {
+            if (settable[s] === key) { found = true; break; }
+        }
+        if (!found) {
+            errors.push({ property: key, error: "not a settable property" });
+            continue;
+        }
+        try {
+            deviceApi.set(key, props[key]);
+            setCount++;
+        } catch (e) {
+            errors.push({ property: key, error: e.toString() });
+        }
+    }
+
+    var result = { properties_set: setCount };
+    if (errors.length > 0) result.errors = errors;
+    sendResult(result, requestId);
+}
+
+// ---------------------------------------------------------------------------
+// Generic LOM helpers — used by chain navigation and other features
+// ---------------------------------------------------------------------------
+
+function discoverParamsAtPath(devicePath) {
+    var deviceApi = new LiveAPI(null, devicePath);
+
+    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
+        return { error: "No device found at path: " + devicePath };
+    }
+
+    var deviceName  = deviceApi.get("name").toString();
+    var deviceClass = deviceApi.get("class_name").toString();
+
+    var paramCount = parseInt(deviceApi.getcount("parameters"));
+    var parameters = [];
+
+    for (var i = 0; i < paramCount; i++) {
+        var paramPath = devicePath + " parameters " + i;
+        var paramApi  = new LiveAPI(null, paramPath);
+
+        if (!paramApi || !paramApi.id || parseInt(paramApi.id) === 0) {
+            continue;
+        }
+
+        var paramInfo = readParamInfo(paramApi, i);
+        parameters.push(paramInfo);
+    }
+
+    return {
+        device_name:     deviceName,
+        device_class:    deviceClass,
+        parameter_count: parameters.length,
+        parameters:      parameters
+    };
 }
 
 // ---------------------------------------------------------------------------
