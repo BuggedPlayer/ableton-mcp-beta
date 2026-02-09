@@ -124,7 +124,7 @@ def get_clip_automation(song, track_index, clip_index, parameter_name, ctrl=None
 
         points = []
         step = clip_len / num_samples
-        for i in range(num_samples + 1):
+        for i in range(num_samples):
             t = i * step
             try:
                 val = envelope.value_at_time(t)

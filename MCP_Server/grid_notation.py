@@ -86,7 +86,7 @@ PREFERRED_LABELS = {
     39: 'CL',            # Clap
     42: 'HC', 44: 'HP',  # Hi-hat closed / pedal
     46: 'HO',            # Hi-hat open
-    45: 'LT', 47: 'LT',  # Low tom
+    45: 'LT', 47: 'MT',  # Low tom / mid tom
     48: 'MT',            # Mid tom
     50: 'HT',            # High tom
     41: 'FT', 43: 'FT',  # Floor tom

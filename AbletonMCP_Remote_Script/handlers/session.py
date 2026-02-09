@@ -103,12 +103,18 @@ def set_song_loop(song, enabled, start, length, ctrl=None):
         if start is not None:
             song.loop_start = max(0.0, float(start))
         if length is not None:
-            song.loop_length = max(0.0, float(length))
+            l = float(length)
+            if l <= 0:
+                msg = "Loop length must be positive, got {0}".format(l)
+                if ctrl:
+                    ctrl.log_message("Invalid loop length: " + msg)
+                raise ValueError(msg)
+            song.loop_length = l
         # Return the values we SET (not read-back, which can be stale)
         result = {}
         result["loop_enabled"] = bool(enabled) if enabled is not None else song.loop
         result["loop_start"] = max(0.0, float(start)) if start is not None else song.loop_start
-        result["loop_length"] = max(0.0, float(length)) if length is not None else song.loop_length
+        result["loop_length"] = float(length) if length is not None else song.loop_length
         return result
     except Exception as e:
         if ctrl:

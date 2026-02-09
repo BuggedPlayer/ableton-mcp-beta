@@ -4,115 +4,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
-## v2.0.0
-
-### New: Device Chain Navigation (3 tools, requires M4L)
-- `discover_rack_chains` — discover chains, nested devices, and drum pads inside Instrument/Audio Effect/Drum Racks
-- `get_chain_device_parameters` — read all parameters of a device nested inside a rack chain
-- `set_chain_device_parameter` — set a parameter on a device nested inside a rack chain
-- LOM paths: `live_set tracks T devices D chains C devices CD`
-
-### New: Simpler / Sample Deep Access (3 tools, requires M4L)
-- `get_simpler_info` — get Simpler device state: playback mode, sample file path, markers, warp settings, slices, warp-mode-specific properties
-- `set_simpler_sample_properties` — set sample start/end markers, warping, warp mode, gain, slicing sensitivity
-- `simpler_manage_slices` — manage slices: insert at position, remove at position, clear all, reset to auto-detected
-- LOM paths: `live_set tracks T devices D sample`
-
-### New: Wavetable Modulation Matrix (3 tools, requires M4L)
-- `get_wavetable_info` — get Wavetable device state: oscillator wavetable categories/indices, modulation matrix with active modulations, voice/unison/filter settings
-- `set_wavetable_modulation` — set modulation amount in Wavetable's mod matrix (sources: Env2, Env3, LFO1, LFO2)
-- `set_wavetable_properties` — set oscillator wavetable category/index, effect modes. Voice/unison/filter properties are read-only (Ableton API limitation)
-
-### M4L Bridge v2.0.0
-- **9 new OSC commands**: `/discover_chains`, `/get_chain_device_params`, `/set_chain_device_param`, `/get_simpler_info`, `/set_simpler_sample_props`, `/simpler_slice`, `/get_wavetable_info`, `/set_wavetable_modulation`, `/set_wavetable_props`
-- **Generic LOM helper**: `discoverParamsAtPath()` enables parameter discovery at arbitrary LOM paths (used by chain device params)
-- **LiveAPI cursor reuse**: `discoverChainsAtPath()` uses `LiveAPI.goto()` to reuse 3 cursor objects instead of creating ~193 per call — prevents Max `[js]` memory exhaustion on large drum racks
-- **OSC packet builders**: All 9 new commands have corresponding builders in `M4LConnection._build_osc_packet()`
-
-### TCP Port: Snapshot / Restore / Morph / Macros
-- **`snapshot_device_state`** — ported from M4L `discover_params` to TCP `get_device_parameters`. No longer requires M4L bridge.
-- **`restore_device_snapshot`** — ported from `_m4l_batch_set_params()` to `_tcp_batch_restore_params()` using name-based parameters. No M4L needed.
-- **`snapshot_all_devices`** — ported to TCP. Snapshots all devices across tracks without M4L.
-- **`restore_group_snapshot`** — ported to TCP.
-- **`morph_between_snapshots`** — ported to TCP. Now uses name-based parameter matching instead of index-based.
-- **`set_macro_value`** — ported to TCP. Auto-looks up parameter names from device if not cached.
-- **`generate_preset`** — fully rewritten to use TCP. No longer calls M4L `discover_params` (which caused timeouts and crashes).
-- **New helper**: `_tcp_batch_restore_params()` — restores device parameters via TCP `set_device_parameters_batch` using name-based params.
-
-### Removed Redundant Tools (-3)
-- **`arm_track`** — use `set_track_arm(arm=True)` instead
-- **`disarm_track`** — use `set_track_arm(arm=False)` instead
-- **`get_return_tracks_info`** — use `get_return_tracks` instead
-
-### Bug Fixes & Improvements
-- **Fixed `set_wavetable_properties` crash**: removed post-set `get()` read-back verification that crashed Ableton. Now uses fire-and-forget `set()` for oscillator properties via M4L
-- **Fixed `set_device_hidden_parameter` crash**: removed post-set `paramApi.get("value")` readback in `setHiddenParam()` — same crash pattern as the wavetable fix. Now reports clamped value instead of reading back
-- **Confirmed Wavetable voice properties read-only**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` are NOT exposed as DeviceParameters (verified against full 93-parameter list). Neither M4L `LiveAPI.set()` nor TCP `set_device_parameter` can write them — hard Ableton API limitation. `set_wavetable_properties` now returns a clear error message for these
-- **Fixed `discover_rack_chains` nested rack support**: added optional `chain_path` parameter to target devices inside chains (e.g. `"chains 0 devices 0"` for nested racks)
-- **Fixed `discover_rack_chains` crash on large drum racks**: refactored `discoverChainsAtPath` to reuse LiveAPI objects via `goto()` instead of creating ~193 new objects per call. Now uses 3 cursor objects total, preventing Max `[js]` memory exhaustion
-- **Fixed `discover_device_params` crash on large devices** (e.g. Wavetable with 93 params): two root causes found and fixed:
-  1. **Synchronous LiveAPI overload**: >~210 `get()` calls in a single [js] execution crashes Ableton. Fixed by chunked async discovery (4 params/chunk with 50ms `Task.schedule()` delays)
-  2. **Response size through outlet/udpsend**: >~8KB base64 via Max `outlet()` crashes Ableton (symbol size limit + OSC routing issues with `+` and `/` characters in standard base64). Fixed by chunked response protocol (Rev 4): JSON is split into 2KB pieces, each base64-encoded independently with URL-safe conversion (`+`→`-`, `/`→`_`), wrapped in a chunk envelope, and sent via deferred `Task.schedule()`. Python server detects chunk metadata (`_c`/`_t` keys), buffers all pieces, decodes each, and reassembles the full JSON
-- **Chunked response protocol**: M4L bridge splits large responses into multiple ~3.6KB UDP packets. Python server reassembles automatically. Small responses sent as-is (backward compatible). Key safety: never creates the full base64 string in memory, uses `.replace()` for O(n) URL-safe conversion, defers all outlet() calls via Task.schedule()
-- **Fixed `set_chain_device_parameter` crash**: removed post-set `paramApi.get("value")` readback in `handleSetChainDeviceParam()` — same crash pattern as wavetable and hidden param fixes
-- **Fixed `batch_set_hidden_parameters` LiveAPI exhaustion**: refactored `_batchProcessNextChunk()` to reuse a single cursor via `goto()` instead of creating new LiveAPI per parameter (93 objects → 1)
-- **Fixed Remote Script crash on client disconnect**: wrapped `client.sendall()` response send in try/except to handle broken connections cleanly instead of propagating the error
-- **Fixed `grid_to_clip` silent failures**: `except Exception: pass` replaced with proper error returns
-- **Fixed `generate_preset` device targeting**: improved docstring guidance to target synth, not effects
-- **Reduced bruteforce resolver logging**: removed per-iteration logging from `devices.py` — only MATCH and ERROR logged now
-- **Improved documentation**: Moved automation and extended note features from Limitations to Features — these are capabilities, not limitations. Fixed `create_clip_automation` docstring that incorrectly said "arrangement automation is not supported"
-- Total tools: 132 -> **138** (+9 new, -3 removed)
-
----
-
-## v1.9.1
-
-### New: Batch Parameter Setting (1 tool)
-- `set_device_parameters` — set multiple device parameters in a single call (JSON array of `{name, value}` pairs). Replaces 20+ individual `set_device_parameter` calls with one round-trip. Essential for sound design tasks like creating pads, leads, etc.
-
-### New: Dynamic Device URI Map
-- **Automatic device name resolution**: say `"load Reverb on track 3"` and the server resolves the name to the correct browser URI (`query:AudioFx#Reverb`) instantly — no `search_browser` needed
-- `_device_uri_map` built dynamically from browser cache after each scan (5,118 device names mapped)
-- Collision resolution: Instruments > Audio Effects > MIDI Effects > Max for Live > Plug-ins > Drums > User Library
-- `_resolve_device_uri()` does O(1) lookup, waits for warmup thread if map is empty
-
-### New: Disk Browser Cache
-- Browser cache is now **persisted to disk** at `~/.ableton-mcp/browser_cache.json` after each successful scan
-- On startup, disk cache is loaded **instantly** (~50ms) before Ableton even connects — `search_browser` and device loading work immediately
-- Background refresh still runs to keep cache fresh and re-saves to disk
-- 24-hour staleness limit — disk cache is ignored if older than 1 day
-- Atomic writes via temp file + `os.replace()` to prevent corruption
-- `refresh_browser_cache` updates both memory and disk
-
-### New: Singleton Guard
-- **Prevents duplicate MCP server instances** — uses exclusive TCP port lock on 9881 with `SO_EXCLUSIVEADDRUSE`
-- Second instance exits immediately with clear error message instead of silently fighting the first
-
-### Browser Cache Improvements
-- **Expanded categories**: now scans 7 browser categories (was 5): Instruments, Drums, Audio Effects, MIDI Effects, Max for Live, Plug-ins, User Library
-- **Removed non-device categories**: Sounds, Clips, Samples, Packs no longer scanned (not useful for device loading, were slowing scan)
-- **Per-category item cap**: 1,500 items per category (was 5,000 shared across all — Instruments used to consume entire budget)
-- **BFS depth reduced**: depth 3 (was 4) — gets device categories without individual preset files
-- **Rate limiting**: 50ms delay between BFS commands to prevent socket flooding
-- **60-second timeout** for browser scan commands (was 10s — Samples root was timing out)
-- **Reconnect resilience**: if connection drops mid-scan, waits 2s, reconnects, and continues instead of crashing
-- **Duplicate scan prevention**: `_browser_cache_populating` flag prevents warmup thread and `_resolve_device_uri` from triggering concurrent scans
-- **5-second warmup delay**: gives Remote Script time to fully initialize before opening second TCP connection
-
-### Bug Fixes
-- **Fixed socket concurrency crash**: browser cache scan used shared global TCP connection, corrupting it for other tools. Now uses dedicated `AbletonConnection` with proper `try/finally` cleanup
-- **Fixed `_browser_cache_populating` flag not resetting** on early connection failure (was getting stuck forever, blocking all future scans)
-- **Fixed hardcoded device URIs**: replaced `_WELL_KNOWN_DEVICES` dict (which had wrong URIs like `query:Audio%20Effects#Reverb`) with dynamic map from actual Ableton browser cache
-- **Fixed M4L socket binding**: replaced `SO_REUSEADDR` with `SO_EXCLUSIVEADDRUSE` to prevent port sharing between instances
-
-### Performance
-- Browser cache scan: ~2 minutes (was ~3.5 min with old categories, was ~100s with duplicate scans)
-- **With disk cache: instant startup** — 0ms wait for search/device loading (was 2-3.5 minutes on first use)
-- Total: 6,473 items cached, 5,118 device names mapped
-
----
-
-## v1.9.0
+## v1.9.0 — 2026-02-09
 
 ### New: ASCII Grid Notation (2 tools)
 - `clip_to_grid` — read a MIDI clip as ASCII grid notation (auto-detects drum vs melodic)
@@ -190,11 +82,11 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 ### Improvements
 - Package renamed to `ableton-mcp-stable` for stable release channel
 - Fixed server version detection (`importlib.metadata` now uses correct package name)
-- Total tools: 94 -> **131** (+37 new tools, see v1.9.1 for +1 more)
+- Total tools: 94 -> **131** (+37 new tools)
 
 ---
 
-## v1.8.2
+## v1.8.2 — 2026-02-09
 
 ### Bug Fix: `batch_set_hidden_parameters` crash
 - **Fixed**: `batch_set_hidden_parameters` was crashing Ableton when setting more than 2 parameters. The root cause was Max's OSC/UDP handling corrupting long base64-encoded payloads.
@@ -207,7 +99,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
-## v1.8.1
+## v1.8.1 — 2026-02-09
 
 ### Repository Cleanup & Documentation
 - Removed stale development files: `Ideas.txt`, `todo.txt`, `lastlog.txt`, `WhatItCanDoAndWhatItCant.txt`, `Installing process.txt`, `Latest bugfix.txt`
@@ -223,7 +115,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
-## v1.8.0
+## v1.8.0 — 2026-02-09
 
 ### New: Arrangement View Workflow
 - `get_song_transport` — get arrangement state (playhead, tempo, time signature, loop bracket, record mode, song length)
@@ -253,7 +145,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
-## v1.7.1
+## v1.7.1 — 2026-02-09
 
 ### Bug Fixes
 - Fixed log handler: timestamp field now only contains timestamp (was duplicating full formatted line in log viewer)
@@ -263,7 +155,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
-## v1.7.0
+## v1.7.0 — 2026-02-09
 
 ### Maintenance
 - Version bump to bypass uvx wheel cache (uvx was caching the first v1.6.0 wheel, preventing M4L auto-connect fixes from being picked up)
@@ -271,7 +163,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
-## v1.6.0
+## v1.6.0 — 2026-02-09
 
 ### New: Layer 0 Core Primitives
 - `batch_set_hidden_parameters` — set multiple device params in one M4L round-trip
@@ -301,7 +193,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
-## v1.5.1
+## v1.5.1 — 2026-02-09
 
 ### Rebrand
 - Renamed from "ableton-mcp" to "AbletonMCP Beta"
@@ -309,7 +201,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
-## v1.5.0
+## v1.5.0 — 2026-02-09
 
 ### Initial Full Release
 - M4L bridge integration for hidden/non-automatable parameter access

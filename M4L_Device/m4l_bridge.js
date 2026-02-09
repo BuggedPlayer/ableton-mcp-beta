@@ -246,36 +246,43 @@ function _discoverNextChunk() {
     if (!_discoverState) return;
 
     var s = _discoverState;
-    var end = Math.min(s.idx + DISCOVER_CHUNK_SIZE, s.paramCount);
+    try {
+        var end = Math.min(s.idx + DISCOVER_CHUNK_SIZE, s.paramCount);
 
-    for (var i = s.idx; i < end; i++) {
-        s.cursor.goto(s.devicePath + " parameters " + i);
+        for (var i = s.idx; i < end; i++) {
+            s.cursor.goto(s.devicePath + " parameters " + i);
 
-        if (!s.cursor.id || parseInt(s.cursor.id) === 0) {
-            continue;
+            if (!s.cursor.id || parseInt(s.cursor.id) === 0) {
+                continue;
+            }
+
+            var paramInfo = readParamInfo(s.cursor, i);
+            s.parameters.push(paramInfo);
         }
 
-        var paramInfo = readParamInfo(s.cursor, i);
-        s.parameters.push(paramInfo);
-    }
+        s.idx = end;
 
-    s.idx = end;
+        if (s.idx >= s.paramCount) {
+            // All chunks done — clean up cursor and send response
+            s.cursor.goto(s.devicePath);
 
-    if (s.idx >= s.paramCount) {
-        // All chunks done — clean up cursor and send response
-        s.cursor.goto(s.devicePath);
-
-        sendResult({
-            device_name:     s.deviceName,
-            device_class:    s.deviceClass,
-            parameter_count: s.parameters.length,
-            parameters:      s.parameters
-        }, s.requestId);
+            sendResult({
+                device_name:     s.deviceName,
+                device_class:    s.deviceClass,
+                parameter_count: s.parameters.length,
+                parameters:      s.parameters
+            }, s.requestId);
+            _discoverState = null;
+        } else {
+            // Schedule the next chunk after a short delay
+            var t = new Task(_discoverNextChunk);
+            t.schedule(DISCOVER_CHUNK_DELAY);
+        }
+    } catch (e) {
+        var rid = s.requestId;
+        try { s.cursor.goto(s.devicePath); } catch (ignore) {}
         _discoverState = null;
-    } else {
-        // Schedule the next chunk after a short delay
-        var t = new Task(_discoverNextChunk);
-        t.schedule(DISCOVER_CHUNK_DELAY);
+        sendError("Discovery failed at param " + s.idx + ": " + e.toString(), rid);
     }
 }
 
@@ -1498,19 +1505,26 @@ function _sendNextResponsePiece() {
     if (!_responseSendState) return;
     var s = _responseSendState;
 
-    // Extract this piece of raw JSON
-    var start = s.idx * RESPONSE_PIECE_SIZE;
-    var end   = Math.min(start + RESPONSE_PIECE_SIZE, s.jsonStr.length);
-    var piece = s.jsonStr.substring(start, end);
+    try {
+        // Extract this piece of raw JSON
+        var start = s.idx * RESPONSE_PIECE_SIZE;
+        var end   = Math.min(start + RESPONSE_PIECE_SIZE, s.jsonStr.length);
+        var piece = s.jsonStr.substring(start, end);
 
-    // Encode piece independently → URL-safe base64 (O(n) via .replace())
-    var pieceB64 = _toUrlSafe(_base64encode(piece));
+        // Encode piece independently → URL-safe base64 (O(n) via .replace())
+        var pieceB64 = _toUrlSafe(_base64encode(piece));
 
-    // Wrap in chunk envelope, encode envelope, send
-    // pieceB64 is pure [A-Za-z0-9_-] — no escaping needed in the JSON string
-    var envelope = '{"_c":' + s.idx + ',"_t":' + s.totalChunks + ',"_d":"' + pieceB64 + '"}';
-    var envelopeB64 = _toUrlSafe(_base64encode(envelope));
-    outlet(0, envelopeB64);
+        // Wrap in chunk envelope, encode envelope, send
+        // pieceB64 is pure [A-Za-z0-9_-] — no escaping needed in the JSON string
+        var envelope = '{"_c":' + s.idx + ',"_t":' + s.totalChunks + ',"_d":"' + pieceB64 + '"}';
+        var envelopeB64 = _toUrlSafe(_base64encode(envelope));
+        outlet(0, envelopeB64);
+    } catch (e) {
+        post("_sendNextResponsePiece error: " + e.toString() + "\n");
+        _responseSendState = null;
+        _drainResponseQueue();
+        return;
+    }
 
     s.idx++;
     if (s.idx < s.totalChunks) {
