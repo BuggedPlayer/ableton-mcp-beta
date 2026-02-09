@@ -250,8 +250,14 @@ def group_tracks(song, track_indices, name, ctrl=None):
             if i < 0 or i >= len(song.tracks):
                 raise IndexError("Track index {0} out of range".format(i))
         song.view.selected_track = song.tracks[track_indices[0]]
+        if ctrl:
+            ctrl.log_message(
+                "Grouping requested for '{0}' - not supported by API; selected track {1}".format(
+                    name, track_indices[0]))
         return {
-            "grouped": True,
+            "grouped": False,
+            "reason": "grouping not supported by Remote Script API",
+            "selected_track_index": track_indices[0],
             "track_count": len(track_indices),
             "name": name,
         }

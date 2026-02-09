@@ -38,16 +38,44 @@ def add_notes_to_clip(song, track_index, clip_index, notes, ctrl=None):
             raise Exception("No clip in slot")
         clip = clip_slot.clip
 
-        # Convert note data to Live's format with validation
-        live_notes = []
+        # Validate and normalize note data
+        note_specs = []
         for note in notes:
-            pitch = max(0, min(127, int(note.get("pitch", 60))))
-            start_time = max(0.0, float(note.get("start_time", 0.0)))
-            duration = max(0.01, float(note.get("duration", 0.25)))
-            velocity = max(1, min(127, int(note.get("velocity", 100))))
-            mute = bool(note.get("mute", False))
-            live_notes.append((pitch, start_time, duration, velocity, mute))
+            note_specs.append({
+                "pitch": max(0, min(127, int(note.get("pitch", 60)))),
+                "start_time": max(0.0, float(note.get("start_time", 0.0))),
+                "duration": max(0.01, float(note.get("duration", 0.25))),
+                "velocity": max(1, min(127, int(note.get("velocity", 100)))),
+                "mute": bool(note.get("mute", False)),
+            })
 
+        # Strategy 1: Live 12+ MidiNoteSpecification API
+        try:
+            import Live
+            if hasattr(Live.Clip, 'MidiNoteSpecification'):
+                specs = []
+                for s in note_specs:
+                    specs.append(Live.Clip.MidiNoteSpecification(
+                        pitch=s["pitch"], start_time=s["start_time"],
+                        duration=s["duration"], velocity=s["velocity"],
+                        mute=s["mute"]))
+                clip.add_new_notes(tuple(specs))
+                return {"note_count": len(notes)}
+        except Exception:
+            pass
+
+        # Strategy 2: Dict-based add_new_notes (Live 11+)
+        if hasattr(clip, 'add_new_notes'):
+            try:
+                clip.add_new_notes(tuple(note_specs))
+                return {"note_count": len(notes)}
+            except Exception:
+                pass
+
+        # Strategy 3: Legacy set_notes fallback
+        live_notes = []
+        for s in note_specs:
+            live_notes.append((s["pitch"], s["start_time"], s["duration"], int(s["velocity"]), s["mute"]))
         clip.set_notes(tuple(live_notes))
         return {"note_count": len(notes)}
     except Exception as e:

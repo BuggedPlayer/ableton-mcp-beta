@@ -149,6 +149,12 @@ def set_loop_start(song, position, ctrl=None):
 def set_loop_end(song, position, ctrl=None):
     """Set the loop end position."""
     try:
+        if position <= song.loop_start:
+            msg = "Loop end ({0}) must be greater than loop start ({1})".format(
+                position, song.loop_start)
+            if ctrl:
+                ctrl.log_message("Invalid loop end: " + msg)
+            raise ValueError(msg)
         # loop_end isn't a direct property; compute via loop_length
         song.loop_length = position - song.loop_start
         return {"loop_start": song.loop_start, "loop_end": song.loop_start + song.loop_length}

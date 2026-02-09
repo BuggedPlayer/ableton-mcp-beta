@@ -211,6 +211,11 @@ function _startChunkedDiscover(trackIdx, deviceIdx, requestId) {
 }
 
 function _startChunkedDiscoverAtPath(devicePath, requestId) {
+    if (_discoverState) {
+        sendResult({ error: "Discovery busy - try again shortly" }, requestId);
+        return;
+    }
+
     var cursor = new LiveAPI(null, devicePath);
 
     if (!cursor || !cursor.id || parseInt(cursor.id) === 0) {
@@ -290,6 +295,11 @@ var _batchState = null;
 
 function handleBatchSetHiddenParams(args) {
     // args: [track_index (int), device_index (int), params_json_b64 (string), request_id (string)]
+    if (_batchState) {
+        var rid = args.length > 0 ? args[args.length - 1].toString() : "";
+        sendError("Batch operation busy - try again shortly", rid);
+        return;
+    }
     if (args.length < 4) {
         sendError("batch_set_hidden_params requires track_index, device_index, params_json_b64, request_id", "");
         return;
@@ -1436,6 +1446,7 @@ function sendError(message, requestId) {
 var RESPONSE_PIECE_SIZE  = 2000;  // chars of RAW JSON per chunk (conservative)
 var RESPONSE_CHUNK_DELAY = 50;    // ms between outlet() calls
 var _responseSendState   = null;  // global state for deferred chunk sending
+var _responseSendQueue   = [];    // queued responses when send is busy
 
 function _toUrlSafe(b64) {
     // O(n) native .replace() — NOT char-by-char concatenation
@@ -1450,6 +1461,13 @@ function sendResponse(jsonStr) {
     }
 
     // Large response — store raw JSON, defer ALL chunk sending via Task
+    if (_responseSendState) {
+        // Previous chunked send still in progress — queue this one
+        _responseSendQueue.push(jsonStr);
+        post("sendResponse: queued (send busy), queue depth=" + _responseSendQueue.length + "\n");
+        return;
+    }
+
     var totalChunks = Math.ceil(jsonStr.length / RESPONSE_PIECE_SIZE);
     post("sendResponse: " + jsonStr.length + " chars JSON -> " + totalChunks + " chunks\n");
 
@@ -1488,6 +1506,11 @@ function _sendNextResponsePiece() {
         t.schedule(RESPONSE_CHUNK_DELAY);
     } else {
         _responseSendState = null;
+        // Drain queue: if another response was queued, start sending it
+        if (_responseSendQueue.length > 0) {
+            var next = _responseSendQueue.shift();
+            sendResponse(next);
+        }
     }
 }
 

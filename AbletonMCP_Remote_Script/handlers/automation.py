@@ -247,7 +247,6 @@ def create_track_automation(song, track_index, parameter_name, automation_points
     try:
         if track_index < 0 or track_index >= len(song.tracks):
             raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
         parameter = _find_parameter(song, track_index, parameter_name)
 
         if not hasattr(parameter, "automation_envelope"):
@@ -256,7 +255,7 @@ def create_track_automation(song, track_index, parameter_name, automation_points
         automation_envelope = parameter.automation_envelope
         for point in automation_points:
             time_val = float(point["time"])
-            value = max(0.0, min(1.0, float(point["value"])))
+            value = max(parameter.min, min(parameter.max, float(point["value"])))
             automation_envelope.insert_step(time_val, 0.0, value)
 
         return {

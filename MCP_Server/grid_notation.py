@@ -204,14 +204,15 @@ def parse_melodic_grid(grid: str, base_octave: int = 4, steps_per_beat: int = 4)
             else:
                 continue
         else:
-            note_name = match.group(1).upper()
+            raw = match.group(1)
+            base_letter = raw[0].upper()
+            accidental = raw[1:] if len(raw) > 1 else ""
             octave = int(match.group(2)) if match.group(2) else base_octave
             pattern_str = match.group(3)
 
             # Convert to MIDI pitch
-            semitone = NOTE_NAMES.get(note_name[0], 0)
-            if len(note_name) > 1:
-                semitone += ACCIDENTALS.get(note_name[1], 0)
+            semitone = NOTE_NAMES.get(base_letter, 0)
+            semitone += ACCIDENTALS.get(accidental, 0)
             pitch = semitone + (octave + 1) * 12
 
         # Parse pattern

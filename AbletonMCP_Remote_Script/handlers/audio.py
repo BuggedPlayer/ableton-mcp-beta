@@ -5,20 +5,26 @@ from __future__ import absolute_import, print_function, unicode_literals
 import traceback
 
 
+def _get_audio_clip(song, track_index, clip_index):
+    """Validate indices and return the audio clip, or raise."""
+    if track_index < 0 or track_index >= len(song.tracks):
+        raise IndexError("Track index out of range")
+    track = song.tracks[track_index]
+    if clip_index < 0 or clip_index >= len(track.clip_slots):
+        raise IndexError("Clip index out of range")
+    clip_slot = track.clip_slots[clip_index]
+    if not clip_slot.has_clip:
+        raise Exception("No clip in slot")
+    clip = clip_slot.clip
+    if not hasattr(clip, 'is_audio_clip') or not clip.is_audio_clip:
+        raise Exception("Clip is not an audio clip")
+    return clip
+
+
 def get_audio_clip_info(song, track_index, clip_index, ctrl=None):
     """Get information about an audio clip."""
     try:
-        if track_index < 0 or track_index >= len(song.tracks):
-            raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
-        if clip_index < 0 or clip_index >= len(track.clip_slots):
-            raise IndexError("Clip index out of range")
-        clip_slot = track.clip_slots[clip_index]
-        if not clip_slot.has_clip:
-            raise Exception("No clip in slot")
-        clip = clip_slot.clip
-        if not hasattr(clip, 'is_audio_clip') or not clip.is_audio_clip:
-            raise Exception("Clip is not an audio clip")
+        clip = _get_audio_clip(song, track_index, clip_index)
 
         warp_mode_map = {
             0: "beats", 1: "tones", 2: "texture",
@@ -50,17 +56,7 @@ def get_audio_clip_info(song, track_index, clip_index, ctrl=None):
 def set_warp_mode(song, track_index, clip_index, warp_mode, ctrl=None):
     """Set the warp mode for an audio clip."""
     try:
-        if track_index < 0 or track_index >= len(song.tracks):
-            raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
-        if clip_index < 0 or clip_index >= len(track.clip_slots):
-            raise IndexError("Clip index out of range")
-        clip_slot = track.clip_slots[clip_index]
-        if not clip_slot.has_clip:
-            raise Exception("No clip in slot")
-        clip = clip_slot.clip
-        if not hasattr(clip, 'is_audio_clip') or not clip.is_audio_clip:
-            raise Exception("Clip is not an audio clip")
+        clip = _get_audio_clip(song, track_index, clip_index)
 
         warp_mode_map = {
             "beats": 0, "tones": 1, "texture": 2,
@@ -82,17 +78,7 @@ def set_warp_mode(song, track_index, clip_index, warp_mode, ctrl=None):
 def set_clip_warp(song, track_index, clip_index, warping_enabled, ctrl=None):
     """Enable or disable warping for an audio clip."""
     try:
-        if track_index < 0 or track_index >= len(song.tracks):
-            raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
-        if clip_index < 0 or clip_index >= len(track.clip_slots):
-            raise IndexError("Clip index out of range")
-        clip_slot = track.clip_slots[clip_index]
-        if not clip_slot.has_clip:
-            raise Exception("No clip in slot")
-        clip = clip_slot.clip
-        if not hasattr(clip, 'is_audio_clip') or not clip.is_audio_clip:
-            raise Exception("Clip is not an audio clip")
+        clip = _get_audio_clip(song, track_index, clip_index)
         clip.warping = warping_enabled
         return {"warping": clip.warping}
     except Exception as e:
@@ -104,17 +90,7 @@ def set_clip_warp(song, track_index, clip_index, warping_enabled, ctrl=None):
 def reverse_clip(song, track_index, clip_index, ctrl=None):
     """Reverse an audio clip."""
     try:
-        if track_index < 0 or track_index >= len(song.tracks):
-            raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
-        if clip_index < 0 or clip_index >= len(track.clip_slots):
-            raise IndexError("Clip index out of range")
-        clip_slot = track.clip_slots[clip_index]
-        if not clip_slot.has_clip:
-            raise Exception("No clip in slot")
-        clip = clip_slot.clip
-        if not hasattr(clip, 'is_audio_clip') or not clip.is_audio_clip:
-            raise Exception("Clip is not an audio clip")
+        clip = _get_audio_clip(song, track_index, clip_index)
 
         if hasattr(clip, "sample"):
             sample = clip.sample
@@ -135,17 +111,7 @@ def reverse_clip(song, track_index, clip_index, ctrl=None):
 def analyze_audio_clip(song, track_index, clip_index, ctrl=None):
     """Analyze an audio clip comprehensively."""
     try:
-        if track_index < 0 or track_index >= len(song.tracks):
-            raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
-        if clip_index < 0 or clip_index >= len(track.clip_slots):
-            raise IndexError("Clip index out of range")
-        clip_slot = track.clip_slots[clip_index]
-        if not clip_slot.has_clip:
-            raise Exception("No clip in slot")
-        clip = clip_slot.clip
-        if not hasattr(clip, 'is_audio_clip') or not clip.is_audio_clip:
-            raise Exception("Clip is not an audio clip")
+        clip = _get_audio_clip(song, track_index, clip_index)
 
         warp_mode_map = {
             0: "beats", 1: "tones", 2: "texture",

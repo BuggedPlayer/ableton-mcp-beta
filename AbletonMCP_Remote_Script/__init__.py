@@ -324,7 +324,7 @@ class AbletonMCP(ControlSurface):
             if command_type in MODIFYING_COMMANDS:
                 response = self._dispatch_on_main_thread(command_type, params)
             elif command_type in READ_ONLY_COMMANDS:
-                response["result"] = self._dispatch_read_only(command_type, params)
+                response = self._dispatch_on_main_thread_readonly(command_type, params)
             else:
                 response["status"] = "error"
                 response["message"] = "Unknown command: " + command_type
@@ -359,6 +359,30 @@ class AbletonMCP(ControlSurface):
             return task_response
         except queue.Empty:
             return {"status": "error", "message": "Timeout waiting for operation to complete"}
+
+    def _dispatch_on_main_thread_readonly(self, command_type, params):
+        """Schedule a read-only command on Ableton's main thread and wait for the result."""
+        response_queue = queue.Queue()
+
+        def main_thread_task():
+            try:
+                result = self._dispatch_read_only(command_type, params)
+                response_queue.put({"status": "success", "result": result})
+            except Exception as e:
+                self.log_message("Error in main thread read-only task: " + str(e))
+                self.log_message(traceback.format_exc())
+                response_queue.put({"status": "error", "message": str(e)})
+
+        try:
+            self.schedule_message(0, main_thread_task)
+        except AssertionError:
+            main_thread_task()
+
+        try:
+            task_response = response_queue.get(timeout=10.0)
+            return task_response
+        except queue.Empty:
+            return {"status": "error", "message": "Timeout waiting for read-only operation to complete"}
 
     # ------------------------------------------------------------------
     # Modifying command dispatch
