@@ -4,6 +4,34 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v2.3.0 — 2026-02-10
+
+### New: UDP Real-Time Parameter Channel (2 tools)
+- `realtime_set_parameter` — set a device parameter via UDP for low-latency, fire-and-forget control (no response confirmation). Ideal for filter sweeps, volume ramps, and real-time automation at 50+ Hz.
+- `realtime_batch_set_parameters` — set multiple device parameters at once via UDP (fire-and-forget). Same low-latency semantics.
+- **Remote Script**: Added UDP listener on port 9882 alongside existing TCP:9877. UDP commands reuse existing `handlers.devices.set_device_parameter()` and `set_device_parameters_batch()` with main-thread safety via `schedule_message`.
+
+### New: ElevenLabs Voice & SFX Integration (19 tools, separate MCP server)
+- Separate optional MCP server (`elevenlabs_mcp/`) for AI voice generation via the ElevenLabs API
+- `text_to_speech` — generate speech with customizable voice, stability, speed
+- `text_to_sound_effects` — generate sound effects from text description (0.5-5s)
+- `speech_to_text` — transcribe audio with optional speaker diarization
+- `speech_to_speech` — convert speech to another voice
+- `text_to_voice` / `create_voice_from_preview` — design and save AI voices
+- `voice_clone` — clone a voice from audio files
+- `isolate_audio` — isolate vocals or background stems
+- `search_voices` / `get_voice` / `search_voice_library` — browse and search voices
+- `check_subscription` — check ElevenLabs API usage and limits
+- `play_audio` — play generated audio locally
+- `create_agent` / `list_agents` / `get_agent` / `add_knowledge_base_to_agent` — conversational AI agents
+- `make_outbound_call` / `list_phone_numbers` — voice calls via agents
+- Audio saves to `~/Documents/Ableton/User Library/eleven_labs_audio/` — import into Ableton via `query:UserLibrary#eleven_labs_audio:filename.mp3`
+- Requires `ELEVENLABS_API_KEY` environment variable; install with `pip install -e ".[elevenlabs]"`
+
+### Total tools: 186 → **188** (+2 UDP) + **19 optional** (ElevenLabs)
+
+---
+
 ## v2.2.0 — 2026-02-10
 
 ### New: Track Metering & Crossfade (3 tools)

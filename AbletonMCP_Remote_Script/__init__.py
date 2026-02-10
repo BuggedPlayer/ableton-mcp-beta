@@ -18,6 +18,7 @@ from . import handlers
 
 # Constants for socket communication
 DEFAULT_PORT = 9877
+UDP_REALTIME_PORT = 9882
 HOST = "localhost"
 
 # -----------------------------------------------------------------------
@@ -145,13 +146,18 @@ class AbletonMCP(ControlSurface):
         self.server_thread = None
         self.running = False
 
-        # Start the socket server
+        # UDP real-time parameter server
+        self.udp_sock = None
+        self.udp_thread = None
+
+        # Start the socket servers
         self.start_server()
+        self.start_udp_server()
 
         self.log_message("AbletonMCP Beta initialized")
 
         # Show a message in Ableton
-        self.show_message("AbletonMCP Beta: Listening on port " + str(DEFAULT_PORT))
+        self.show_message("AbletonMCP Beta: TCP " + str(DEFAULT_PORT) + " / UDP " + str(UDP_REALTIME_PORT))
 
     @property
     def _song(self):
@@ -195,6 +201,17 @@ class AbletonMCP(ControlSurface):
             if client_thread.is_alive():
                 client_thread.join(3.0)
 
+        # Close UDP socket
+        if self.udp_sock:
+            try:
+                self.udp_sock.close()
+            except (OSError, socket.error):
+                pass
+            self.udp_sock = None
+
+        if self.udp_thread and self.udp_thread.is_alive():
+            self.udp_thread.join(3.0)
+
         ControlSurface.disconnect(self)
         self.log_message("AbletonMCP Beta disconnected")
 
@@ -215,6 +232,88 @@ class AbletonMCP(ControlSurface):
         except Exception as e:
             self.log_message("Error starting server: " + str(e))
             self.show_message("AbletonMCP Beta: Error starting server - " + str(e))
+
+    def start_udp_server(self):
+        """Start the UDP real-time parameter server in a separate thread."""
+        try:
+            self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.udp_sock.bind((HOST, UDP_REALTIME_PORT))
+            self.udp_sock.settimeout(1.0)
+
+            self.udp_thread = threading.Thread(target=self._udp_server_loop)
+            self.udp_thread.daemon = True
+            self.udp_thread.start()
+
+            self.log_message("UDP real-time server started on port " + str(UDP_REALTIME_PORT))
+        except Exception as e:
+            self.log_message("Error starting UDP server: " + str(e))
+
+    def _udp_server_loop(self):
+        """UDP server loop - receives fire-and-forget parameter updates."""
+        while self.running:
+            try:
+                data, addr = self.udp_sock.recvfrom(4096)
+                if not data:
+                    continue
+
+                try:
+                    command = json.loads(data.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    continue
+
+                self._process_udp_command(command)
+
+            except socket.timeout:
+                continue
+            except Exception as e:
+                if self.running:
+                    self.log_message("UDP server error: " + str(e))
+                time.sleep(0.1)
+
+    def _process_udp_command(self, command):
+        """Process a UDP command. Fire-and-forget - no response sent."""
+        cmd = command.get("type", "")
+        params = command.get("params", {})
+        song = self._song
+        ctrl = self
+
+        if cmd == "set_device_parameter":
+            def task():
+                try:
+                    handlers.devices.set_device_parameter(
+                        song,
+                        params.get("track_index", 0),
+                        params.get("device_index", 0),
+                        params.get("parameter_name", ""),
+                        params.get("value", 0.0),
+                        params.get("track_type", "track"),
+                        ctrl=ctrl,
+                    )
+                except Exception as e:
+                    self.log_message("UDP set_device_parameter error: " + str(e))
+            try:
+                self.schedule_message(0, task)
+            except AssertionError:
+                task()
+
+        elif cmd == "batch_set_device_parameters":
+            def task():
+                try:
+                    handlers.devices.set_device_parameters_batch(
+                        song,
+                        params.get("track_index", 0),
+                        params.get("device_index", 0),
+                        params.get("parameters", []),
+                        params.get("track_type", "track"),
+                        ctrl=ctrl,
+                    )
+                except Exception as e:
+                    self.log_message("UDP batch_set error: " + str(e))
+            try:
+                self.schedule_message(0, task)
+            except AssertionError:
+                task()
 
     def _server_thread(self):
         """Server thread implementation - handles client connections"""

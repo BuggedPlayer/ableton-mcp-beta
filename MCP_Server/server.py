@@ -26,6 +26,8 @@ class AbletonConnection:
     host: str
     port: int
     sock: socket.socket = None
+    _udp_sock: socket.socket = None
+    _udp_port: int = 9882
     
     def connect(self) -> bool:
         """Connect to the Ableton Remote Script socket server"""
@@ -58,9 +60,36 @@ class AbletonConnection:
                 logger.error("Error disconnecting from Ableton: %s", e)
             finally:
                 self.sock = None
+        if self._udp_sock:
+            try:
+                self._udp_sock.close()
+            except Exception:
+                pass
+            finally:
+                self._udp_sock = None
 
     def __post_init__(self):
         self._recv_buffer = ""
+
+    def _ensure_udp_socket(self):
+        """Create a UDP socket for real-time parameter sending if not already open."""
+        if self._udp_sock is None:
+            self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        return self._udp_sock
+
+    def send_udp_command(self, command_type: str, params: Dict[str, Any] = None):
+        """Send a fire-and-forget UDP command to the Remote Script.
+
+        No response is expected or waited for.
+        """
+        sock = self._ensure_udp_socket()
+        command = {
+            "type": command_type,
+            "params": params or {}
+        }
+        payload = json.dumps(command).encode("utf-8")
+        sock.sendto(payload, (self.host, self._udp_port))
+        logger.debug("Sent UDP command: %s", command_type)
 
     def receive_full_response(self, sock, buffer_size=8192, timeout=15.0):
         """Receive a complete newline-delimited JSON response and return the parsed object"""
@@ -3063,6 +3092,86 @@ def set_device_parameters(ctx: Context, track_index: int, device_index: int,
     except Exception as e:
         logger.error(f"Error in batch set parameters: {str(e)}")
         return "Error setting device parameters. Please check the server logs for details."
+
+
+@mcp.tool()
+def realtime_set_parameter(ctx: Context, track_index: int, device_index: int,
+                           parameter_name: str, value: float,
+                           track_type: str = "track") -> str:
+    """
+    Set a device parameter via UDP for real-time control (fire-and-forget, no confirmation).
+
+    Use this instead of set_device_parameter when you need rapid parameter changes
+    (e.g., filter sweeps, volume ramps) where response confirmation is not needed.
+    The value is applied immediately with minimal latency.
+
+    Parameters:
+    - track_index: The index of the track containing the device
+    - device_index: The index of the device on the track
+    - parameter_name: The name of the parameter to set
+    - value: The new value for the parameter (will be clamped to min/max)
+    - track_type: Type of track: "track" (default), "return", or "master"
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        if track_type not in ("track", "return", "master"):
+            return "Error: track_type must be 'track', 'return', or 'master'"
+        ableton = get_ableton_connection()
+        ableton.send_udp_command("set_device_parameter", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "parameter_name": parameter_name,
+            "value": value,
+            "track_type": track_type,
+        })
+        return f"Sent real-time parameter update: '{parameter_name}' = {value} (fire-and-forget via UDP)"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error("Error sending real-time parameter: %s", e)
+        return f"Error sending real-time parameter: {e}"
+
+
+@mcp.tool()
+def realtime_batch_set_parameters(ctx: Context, track_index: int, device_index: int,
+                                  parameters: str, track_type: str = "track") -> str:
+    """
+    Set multiple device parameters at once via UDP for real-time control (fire-and-forget).
+
+    Use this for rapid batch parameter updates where response confirmation is not needed.
+
+    Parameters:
+    - track_index: The index of the track containing the device
+    - device_index: The index of the device on the track
+    - parameters: JSON string of parameter list, e.g. '[{"name": "Filter Freq", "value": 0.5}]'
+    - track_type: Type of track: "track" (default), "return", or "master"
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        if track_type not in ("track", "return", "master"):
+            return "Error: track_type must be 'track', 'return', or 'master'"
+
+        params_list = json.loads(parameters) if isinstance(parameters, str) else parameters
+        if not isinstance(params_list, list) or not params_list:
+            return "Error: parameters must be a non-empty JSON array of {name, value} objects"
+
+        ableton = get_ableton_connection()
+        ableton.send_udp_command("batch_set_device_parameters", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "parameters": params_list,
+            "track_type": track_type,
+        })
+        return f"Sent real-time batch update for {len(params_list)} parameters (fire-and-forget via UDP)"
+    except json.JSONDecodeError:
+        return "Error: parameters must be a valid JSON array"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error("Error sending real-time batch parameters: %s", e)
+        return f"Error sending real-time batch parameters: {e}"
 
 
 @mcp.tool()

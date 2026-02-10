@@ -1,6 +1,6 @@
 # AbletonMCP
 
-**186 tools connecting Claude AI to Ableton Live**
+**188 tools connecting Claude AI to Ableton Live** (+19 optional ElevenLabs voice/SFX tools)
 
 AbletonMCP gives Claude direct control over your Ableton Live session through the Model Context Protocol. Create tracks, write MIDI, design sounds, mix, automate, browse instruments, snapshot presets, and navigate deep into device chains and modulation matrices — all through natural language conversation.
 
@@ -94,19 +94,24 @@ AbletonMCP gives Claude direct control over your Ableton Live session through th
 
 ```
 Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
-                          |
+                          |            <--UDP:9882-->  (real-time params)
                           +---<--UDP/OSC:9878/9879-->  M4L Bridge (optional)
                           |
                           +---<--HTTP:9880-->  Web Status Dashboard
+
+              ElevenLabs MCP Server (optional, separate process)
+                          |
+                          +---<--HTTPS-->  ElevenLabs API
 ```
 
-- **Remote Script** (TCP) — 173 tools. Runs as a Control Surface inside Ableton. Handles tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls (Compressor side-chain, EQ8, Hybrid Reverb, Transmute, Simpler), song settings, view/selection, metering, and navigation.
+- **Remote Script** (TCP+UDP) — 175 tools. Runs as a Control Surface inside Ableton. TCP:9877 for all commands. UDP:9882 for fire-and-forget real-time parameter updates at 50+ Hz.
 - **M4L Bridge** (UDP/OSC) — 13 tools. A Max for Live device that accesses hidden parameters, rack chain internals, Simpler sample data, and Wavetable modulation matrices.
+- **ElevenLabs Server** (optional) — 19 tools. AI voice generation, sound effects, voice cloning, transcription. Requires `ELEVENLABS_API_KEY`.
 - **Web Dashboard** — real-time status, tool call metrics, and server logs at `http://127.0.0.1:9880`.
 
 ---
 
-## Tools by Category (186 Total)
+## Tools by Category (188 + 19 Optional)
 
 | Category | Count | Channel |
 |---|---|---|
@@ -125,6 +130,7 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
 | Return Tracks | 6 | TCP |
 | Master Track | 2 | TCP |
 | Devices & Parameters | 22 | TCP |
+| Real-time Parameters | 2 | UDP |
 | View & Selection | 3 | TCP |
 | Browser & Loading | 10 | TCP |
 | Snapshot & Versioning | 9 | TCP |
@@ -134,7 +140,9 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
 | Parameter Mapper | 4 | TCP |
 | Rack Presets | 1 | TCP |
 | Deep Device Access | 10 | UDP/OSC |
-| **Total** | **186** | |
+| **Subtotal** | **188** | |
+| ElevenLabs Voice/SFX | 19 | HTTPS (optional) |
+| **Total** | **207** | |
 
 ---
 
@@ -169,8 +177,9 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 ## Flexibility
 
 - **Works with any MCP client** — Claude Desktop, Cursor, or any tool that speaks the Model Context Protocol
-- **173 tools without Max for Live** — the TCP Remote Script covers tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls (Simpler, Transmute, Compressor, EQ8, Hybrid Reverb), song settings, view/selection, metering, and navigation. M4L is optional.
+- **175 tools without Max for Live** — the TCP/UDP Remote Script covers tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls (Simpler, Transmute, Compressor, EQ8, Hybrid Reverb), song settings, view/selection, metering, real-time parameter control, and navigation. M4L is optional.
 - **+13 deep-access tools with M4L** — hidden parameters, rack chain internals, Simpler samples, Wavetable modulation
+- **+19 optional ElevenLabs tools** — AI voice generation, sound effects, voice cloning, transcription, conversational AI agents. Requires API key.
 - **Web dashboard** — live monitoring of connection status, tool calls, and server logs at port 9880
 - **Ableton Live 10, 11, and 12** — graceful API fallbacks for version-specific features (extended notes, capture MIDI, arrangement placement)
 - **Cross-platform** — Windows and macOS
@@ -180,4 +189,44 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 
 ## Version
 
-**v2.2.0** — see [CHANGELOG.md](CHANGELOG.md) for full release history.
+**v2.3.0** — see [CHANGELOG.md](CHANGELOG.md) for full release history.
+
+---
+
+## Optional: ElevenLabs Voice & SFX Server
+
+AbletonMCP includes an optional ElevenLabs integration that provides 19 additional tools for AI voice generation, sound effects, voice cloning, and conversational AI agents. Generated audio saves directly to your Ableton User Library for easy import.
+
+### Setup
+
+1. Install dependencies: `pip install -e ".[elevenlabs]"`
+2. Set your API key: `export ELEVENLABS_API_KEY=your_key_here` (or add to `.env`)
+3. Add to your Claude Desktop config as a second server:
+
+```json
+{
+  "mcpServers": {
+    "ableton-mcp": {
+      "command": "uv",
+      "args": ["run", "ableton-mcp-stable"]
+    },
+    "elevenlabs": {
+      "command": "uv",
+      "args": ["run", "elevenlabs-mcp"],
+      "env": {
+        "ELEVENLABS_API_KEY": "your_key_here"
+      }
+    }
+  }
+}
+```
+
+### Usage
+
+> "Generate a robot voice saying 'drop the bass' and load it into Simpler on track 3"
+
+> "Create thunder sound effect, 3 seconds long"
+
+> "Transcribe the audio clip on my desktop"
+
+> "Clone my voice from these 3 samples and use it for text-to-speech"
