@@ -38,6 +38,8 @@ MODIFYING_COMMANDS = {
     "set_metronome", "tap_tempo",
     "undo", "redo", "continue_playing", "re_enable_automation",
     "set_or_delete_cue", "jump_to_cue", "set_groove_settings",
+    "set_song_settings", "trigger_session_record", "navigate_playback",
+    "select_scene", "select_track", "set_detail_clip",
     # tracks
     "create_midi_track", "create_audio_track", "create_return_track",
     "set_track_name", "delete_track", "duplicate_track",
@@ -65,6 +67,7 @@ MODIFYING_COMMANDS = {
     "set_macro_value", "set_drum_pad", "copy_drum_pad",
     "rack_variation_action", "sliced_simpler_to_drum_rack",
     "set_compressor_sidechain", "set_eq8_properties", "set_hybrid_reverb_ir",
+    "set_transmute_properties",
     # browser
     "load_browser_item", "load_instrument_or_effect", "load_sample",
     # midi
@@ -87,6 +90,7 @@ READ_ONLY_COMMANDS = {
     "get_session_info", "get_song_transport",
     "get_loop_info", "get_recording_status",
     "get_cue_points", "get_groove_pool",
+    "get_song_settings",
     # tracks
     "get_track_info", "get_all_tracks_info", "get_return_tracks_info",
     "get_track_routing",
@@ -99,6 +103,7 @@ READ_ONLY_COMMANDS = {
     "get_device_parameters", "get_macro_values",
     "get_drum_pads", "get_rack_variations",
     "get_compressor_sidechain", "get_eq8_properties", "get_hybrid_reverb_ir",
+    "get_transmute_properties",
     # browser
     "get_browser_item", "get_browser_tree", "get_browser_items_at_path",
     "search_browser", "get_user_library", "get_user_folders",
@@ -451,6 +456,22 @@ class AbletonMCP(ControlSurface):
                 song, p.get("groove_amount"), p.get("groove_index"),
                 p.get("timing_amount"), p.get("quantization_amount"),
                 p.get("random_amount"), p.get("velocity_amount"), ctrl)
+        elif cmd == "set_song_settings":
+            return handlers.session.set_song_settings(
+                song, p.get("signature_numerator"), p.get("signature_denominator"),
+                p.get("swing_amount"), p.get("clip_trigger_quantization"),
+                p.get("midi_recording_quantization"), p.get("back_to_arranger"),
+                p.get("follow_song"), p.get("draw_mode"), ctrl)
+        elif cmd == "trigger_session_record":
+            return handlers.session.trigger_session_record(song, p.get("record_length"), ctrl)
+        elif cmd == "navigate_playback":
+            return handlers.session.navigate_playback(song, p.get("action", "play_selection"), p.get("beats"), ctrl)
+        elif cmd == "select_scene":
+            return handlers.session.select_scene(song, p.get("scene_index", 0), ctrl)
+        elif cmd == "select_track":
+            return handlers.session.select_track(song, p.get("track_index", 0), p.get("track_type", "track"), ctrl)
+        elif cmd == "set_detail_clip":
+            return handlers.session.set_detail_clip(song, p.get("track_index", 0), p.get("clip_index", 0), ctrl)
 
         # --- Tracks ---
         elif cmd == "create_midi_track":
@@ -605,6 +626,13 @@ class AbletonMCP(ControlSurface):
                 p.get("ir_category_index"), p.get("ir_file_index"),
                 p.get("ir_attack_time"), p.get("ir_decay_time"),
                 p.get("ir_size_factor"), p.get("ir_time_shaping_on"), ctrl)
+        elif cmd == "set_transmute_properties":
+            return handlers.devices.set_transmute_properties(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("frequency_dial_mode_index"), p.get("pitch_mode_index"),
+                p.get("mod_mode_index"), p.get("mono_poly_index"),
+                p.get("midi_gate_index"), p.get("polyphony"),
+                p.get("pitch_bend_range"), ctrl)
 
         # --- Browser ---
         elif cmd == "load_browser_item":
@@ -699,6 +727,8 @@ class AbletonMCP(ControlSurface):
             return handlers.session.get_cue_points(song, ctrl)
         elif cmd == "get_groove_pool":
             return handlers.session.get_groove_pool(song, ctrl)
+        elif cmd == "get_song_settings":
+            return handlers.session.get_song_settings(song, ctrl)
 
         # --- Tracks ---
         elif cmd == "get_track_info":
@@ -743,6 +773,9 @@ class AbletonMCP(ControlSurface):
                 song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
         elif cmd == "get_hybrid_reverb_ir":
             return handlers.devices.get_hybrid_reverb_ir(
+                song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
+        elif cmd == "get_transmute_properties":
+            return handlers.devices.get_transmute_properties(
                 song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
 
         # --- Browser ---

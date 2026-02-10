@@ -896,3 +896,100 @@ def set_hybrid_reverb_ir(song, track_index, device_index,
         if ctrl:
             ctrl.log_message("Error setting Hybrid Reverb IR: " + str(e))
         raise
+
+
+# --- Transmute Device Controls ---
+
+
+def _get_transmute_device(song, track_index, device_index):
+    """Resolve a Transmute device, raising if not found or wrong type."""
+    if track_index < 0 or track_index >= len(song.tracks):
+        raise IndexError("Track index out of range")
+    track = song.tracks[track_index]
+    if device_index < 0 or device_index >= len(track.devices):
+        raise IndexError("Device index out of range")
+    device = track.devices[device_index]
+    if "transmute" not in device.class_name.lower():
+        raise Exception("Device '{0}' is not a Transmute (class: {1})".format(
+            device.name, device.class_name))
+    return device
+
+
+def get_transmute_properties(song, track_index, device_index, ctrl=None):
+    """Get Transmute-specific properties: mode indices, polyphony, pitch bend range."""
+    try:
+        device = _get_transmute_device(song, track_index, device_index)
+        result = {
+            "device_name": device.name,
+            "track_index": track_index,
+            "device_index": device_index,
+        }
+        props = [
+            ("frequency_dial_mode_index", "frequency_dial_mode_list"),
+            ("pitch_mode_index", "pitch_mode_list"),
+            ("mod_mode_index", "mod_mode_list"),
+            ("mono_poly_index", "mono_poly_list"),
+            ("midi_gate_index", "midi_gate_list"),
+        ]
+        for index_attr, list_attr in props:
+            try:
+                result[index_attr] = int(getattr(device, index_attr))
+            except Exception:
+                result[index_attr] = None
+            try:
+                result[list_attr] = [str(x) for x in getattr(device, list_attr)]
+            except Exception:
+                result[list_attr] = []
+        try:
+            result["polyphony"] = int(device.polyphony)
+        except Exception:
+            result["polyphony"] = None
+        try:
+            result["pitch_bend_range"] = int(device.pitch_bend_range)
+        except Exception:
+            result["pitch_bend_range"] = None
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting Transmute properties: " + str(e))
+        raise
+
+
+def set_transmute_properties(song, track_index, device_index,
+                              frequency_dial_mode_index=None, pitch_mode_index=None,
+                              mod_mode_index=None, mono_poly_index=None,
+                              midi_gate_index=None, polyphony=None,
+                              pitch_bend_range=None, ctrl=None):
+    """Set Transmute-specific properties."""
+    try:
+        device = _get_transmute_device(song, track_index, device_index)
+        changes = {}
+        if frequency_dial_mode_index is not None:
+            device.frequency_dial_mode_index = int(frequency_dial_mode_index)
+            changes["frequency_dial_mode_index"] = int(frequency_dial_mode_index)
+        if pitch_mode_index is not None:
+            device.pitch_mode_index = int(pitch_mode_index)
+            changes["pitch_mode_index"] = int(pitch_mode_index)
+        if mod_mode_index is not None:
+            device.mod_mode_index = int(mod_mode_index)
+            changes["mod_mode_index"] = int(mod_mode_index)
+        if mono_poly_index is not None:
+            device.mono_poly_index = int(mono_poly_index)
+            changes["mono_poly_index"] = int(mono_poly_index)
+        if midi_gate_index is not None:
+            device.midi_gate_index = int(midi_gate_index)
+            changes["midi_gate_index"] = int(midi_gate_index)
+        if polyphony is not None:
+            device.polyphony = int(polyphony)
+            changes["polyphony"] = int(polyphony)
+        if pitch_bend_range is not None:
+            device.pitch_bend_range = int(pitch_bend_range)
+            changes["pitch_bend_range"] = int(pitch_bend_range)
+        changes["device_name"] = device.name
+        changes["track_index"] = track_index
+        changes["device_index"] = device_index
+        return changes
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting Transmute properties: " + str(e))
+        raise

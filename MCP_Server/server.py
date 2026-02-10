@@ -136,6 +136,9 @@ class AbletonConnection:
         "undo", "redo", "set_track_routing", "set_clip_pitch", "set_clip_launch_mode",
         "set_or_delete_cue", "jump_to_cue",
         "set_compressor_sidechain", "set_eq8_properties", "set_hybrid_reverb_ir",
+        "set_song_settings", "trigger_session_record", "navigate_playback",
+        "select_scene", "select_track", "set_detail_clip",
+        "set_transmute_properties",
     ])
 
     def send_command(self, command_type: str, params: Dict[str, Any] = None, timeout: float = None) -> Dict[str, Any]:
@@ -6940,6 +6943,276 @@ def set_hybrid_reverb_ir(ctx: Context, track_index: int, device_index: int,
         return f"Invalid input: {e}"
     except Exception as e:
         return f"Error setting Hybrid Reverb IR: {str(e)}"
+
+
+# --- Song Settings & Navigation ---
+
+
+@mcp.tool()
+def get_song_settings(ctx: Context) -> str:
+    """Get global song settings: time signature, swing amount, clip trigger quantization,
+    MIDI recording quantization, arrangement overdub, back to arranger, follow song, and draw mode.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_song_settings", {})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error getting song settings: {str(e)}"
+
+
+@mcp.tool()
+def set_song_settings(ctx: Context,
+                       signature_numerator: int = None,
+                       signature_denominator: int = None,
+                       swing_amount: float = None,
+                       clip_trigger_quantization: int = None,
+                       midi_recording_quantization: int = None,
+                       back_to_arranger: bool = None,
+                       follow_song: bool = None,
+                       draw_mode: bool = None) -> str:
+    """Set global song settings. All parameters are optional — only specified values are changed.
+
+    Parameters:
+    - signature_numerator: Time signature numerator (1-99, e.g. 3 for 3/4)
+    - signature_denominator: Time signature denominator (1, 2, 4, 8, or 16)
+    - swing_amount: Global swing amount (0.0-1.0)
+    - clip_trigger_quantization: Global clip launch quantization (0=None, 1=8 Bars, 2=4 Bars, 3=2 Bars, 4=1 Bar, 5=1/2, 6=1/2T, 7=1/4, 8=1/4T, 9=1/8, 10=1/8T, 11=1/16, 12=1/16T, 13=1/32)
+    - midi_recording_quantization: MIDI input recording quantization (0=None, 1=1/4, 2=1/8, 3=1/8T, 4=1/8+1/8T, 5=1/16, 6=1/16T, 7=1/16+1/16T, 8=1/32)
+    - back_to_arranger: If true, triggering a Session clip disables Arrangement playback
+    - follow_song: If true, Arrangement view auto-scrolls to follow the play marker
+    - draw_mode: If true, enables envelope/note draw mode
+    """
+    try:
+        params = {}
+        if signature_numerator is not None:
+            params["signature_numerator"] = signature_numerator
+        if signature_denominator is not None:
+            params["signature_denominator"] = signature_denominator
+        if swing_amount is not None:
+            _validate_range(swing_amount, "swing_amount", 0.0, 1.0)
+            params["swing_amount"] = swing_amount
+        if clip_trigger_quantization is not None:
+            _validate_index(clip_trigger_quantization, "clip_trigger_quantization")
+            params["clip_trigger_quantization"] = clip_trigger_quantization
+        if midi_recording_quantization is not None:
+            _validate_index(midi_recording_quantization, "midi_recording_quantization")
+            params["midi_recording_quantization"] = midi_recording_quantization
+        if back_to_arranger is not None:
+            params["back_to_arranger"] = back_to_arranger
+        if follow_song is not None:
+            params["follow_song"] = follow_song
+        if draw_mode is not None:
+            params["draw_mode"] = draw_mode
+        if not params:
+            return "No parameters specified. Provide at least one setting to change."
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_song_settings", params)
+        changes = [f"{k}={v}" for k, v in result.items()]
+        return f"Song settings updated: {', '.join(changes)}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting song settings: {str(e)}"
+
+
+@mcp.tool()
+def trigger_session_record(ctx: Context, record_length: float = None) -> str:
+    """Trigger a new session recording. Optionally specify a fixed bar length
+    after which recording stops automatically.
+
+    Parameters:
+    - record_length: Optional number of bars to record. If omitted, recording continues until manually stopped.
+    """
+    try:
+        params = {}
+        if record_length is not None:
+            params["record_length"] = record_length
+        ableton = get_ableton_connection()
+        result = ableton.send_command("trigger_session_record", params)
+        if record_length is not None:
+            return f"Session recording triggered for {record_length} bars"
+        return "Session recording triggered"
+    except Exception as e:
+        return f"Error triggering session record: {str(e)}"
+
+
+@mcp.tool()
+def navigate_playback(ctx: Context, action: str, beats: float = None) -> str:
+    """Navigate the playback position: jump, scrub, or play selection.
+
+    Parameters:
+    - action: 'jump_by' (relative jump, stops playback), 'scrub_by' (relative jump, keeps playing), or 'play_selection' (play the current arrangement selection)
+    - beats: Number of beats to jump/scrub (positive=forward, negative=backward). Required for jump_by and scrub_by.
+    """
+    try:
+        if action not in ("jump_by", "scrub_by", "play_selection"):
+            return "action must be 'jump_by', 'scrub_by', or 'play_selection'"
+        params = {"action": action}
+        if beats is not None:
+            params["beats"] = beats
+        ableton = get_ableton_connection()
+        result = ableton.send_command("navigate_playback", params)
+        pos = result.get("position", "?")
+        if action == "play_selection":
+            return f"Playing selection (position: {pos})"
+        return f"{action} by {beats} beats (position: {pos})"
+    except Exception as e:
+        return f"Error navigating playback: {str(e)}"
+
+
+# --- View & Selection ---
+
+
+@mcp.tool()
+def select_scene(ctx: Context, scene_index: int) -> str:
+    """Select a scene by index in Live's Session view.
+
+    Parameters:
+    - scene_index: The index of the scene to select (0-based)
+    """
+    try:
+        _validate_index(scene_index, "scene_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("select_scene", {"scene_index": scene_index})
+        name = result.get("scene_name", "?")
+        return f"Selected scene {scene_index}: '{name}'"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error selecting scene: {str(e)}"
+
+
+@mcp.tool()
+def select_track(ctx: Context, track_index: int, track_type: str = "track") -> str:
+    """Select a track in Live's Session or Arrangement view.
+
+    Parameters:
+    - track_index: The index of the track to select (0-based). Ignored for master.
+    - track_type: 'track' (default), 'return', or 'master'
+    """
+    try:
+        if track_type not in ("track", "return", "master"):
+            return "track_type must be 'track', 'return', or 'master'"
+        if track_type != "master":
+            _validate_index(track_index, "track_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("select_track", {
+            "track_index": track_index,
+            "track_type": track_type,
+        })
+        name = result.get("selected_track", "?")
+        return f"Selected {track_type} track: '{name}'"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error selecting track: {str(e)}"
+
+
+@mcp.tool()
+def set_detail_clip(ctx: Context, track_index: int, clip_index: int) -> str:
+    """Show a clip in Live's Detail view (the bottom panel).
+
+    Parameters:
+    - track_index: The track containing the clip
+    - clip_index: The clip slot index
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_detail_clip", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+        })
+        name = result.get("clip_name", "?")
+        return f"Detail view showing clip '{name}' (track {track_index}, slot {clip_index})"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting detail clip: {str(e)}"
+
+
+# --- Transmute Device ---
+
+
+@mcp.tool()
+def get_transmute_properties(ctx: Context, track_index: int, device_index: int) -> str:
+    """Get Transmute-specific properties: frequency dial mode, pitch mode, mod mode,
+    mono/poly mode, MIDI gate mode, polyphony, and pitch bend range.
+    Each mode property includes the current index and a list of available options.
+
+    Parameters:
+    - track_index: The index of the track containing the Transmute device
+    - device_index: The index of the Transmute device on the track
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_transmute_properties", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error getting Transmute properties: {str(e)}"
+
+
+@mcp.tool()
+def set_transmute_properties(ctx: Context, track_index: int, device_index: int,
+                              frequency_dial_mode_index: int = None,
+                              pitch_mode_index: int = None,
+                              mod_mode_index: int = None,
+                              mono_poly_index: int = None,
+                              midi_gate_index: int = None,
+                              polyphony: int = None,
+                              pitch_bend_range: int = None) -> str:
+    """Set Transmute-specific properties. All parameters are optional — only specified values are changed.
+
+    Parameters:
+    - track_index: The index of the track containing the Transmute device
+    - device_index: The index of the Transmute device on the track
+    - frequency_dial_mode_index: Index into frequency_dial_mode_list
+    - pitch_mode_index: Index into pitch_mode_list
+    - mod_mode_index: Index into mod_mode_list
+    - mono_poly_index: Index into mono_poly_list (0=Mono, 1=Poly typically)
+    - midi_gate_index: Index into midi_gate_list
+    - polyphony: Number of polyphony voices
+    - pitch_bend_range: Pitch bend range in semitones
+
+    Use get_transmute_properties first to see available mode lists and current values.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        params = {"track_index": track_index, "device_index": device_index}
+        if frequency_dial_mode_index is not None:
+            params["frequency_dial_mode_index"] = frequency_dial_mode_index
+        if pitch_mode_index is not None:
+            params["pitch_mode_index"] = pitch_mode_index
+        if mod_mode_index is not None:
+            params["mod_mode_index"] = mod_mode_index
+        if mono_poly_index is not None:
+            params["mono_poly_index"] = mono_poly_index
+        if midi_gate_index is not None:
+            params["midi_gate_index"] = midi_gate_index
+        if polyphony is not None:
+            params["polyphony"] = polyphony
+        if pitch_bend_range is not None:
+            params["pitch_bend_range"] = pitch_bend_range
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_transmute_properties", params)
+        device_name = result.get("device_name", "?")
+        changes = [f"{k}={v}" for k, v in result.items()
+                   if k not in ("track_index", "device_index", "device_name")]
+        return f"Transmute '{device_name}' updated: {', '.join(changes) if changes else 'no changes'}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting Transmute properties: {str(e)}"
 
 
 # Main execution

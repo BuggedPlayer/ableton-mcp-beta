@@ -434,6 +434,212 @@ def get_groove_pool(song, ctrl=None):
         raise
 
 
+# --- Song Settings ---
+
+
+def get_song_settings(song, ctrl=None):
+    """Get global song settings: time signature, swing, quantization, overdub, etc."""
+    try:
+        result = {
+            "signature_numerator": song.signature_numerator,
+            "signature_denominator": song.signature_denominator,
+            "swing_amount": song.swing_amount,
+            "arrangement_overdub": song.arrangement_overdub,
+            "back_to_arranger": song.back_to_arranger,
+        }
+        try:
+            result["clip_trigger_quantization"] = int(song.clip_trigger_quantization)
+        except Exception:
+            result["clip_trigger_quantization"] = None
+        try:
+            result["midi_recording_quantization"] = int(song.midi_recording_quantization)
+        except Exception:
+            result["midi_recording_quantization"] = None
+        try:
+            result["follow_song"] = song.view.follow_song
+        except Exception:
+            result["follow_song"] = None
+        try:
+            result["draw_mode"] = song.view.draw_mode
+        except Exception:
+            result["draw_mode"] = None
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting song settings: " + str(e))
+        raise
+
+
+def set_song_settings(song, signature_numerator=None, signature_denominator=None,
+                       swing_amount=None, clip_trigger_quantization=None,
+                       midi_recording_quantization=None, back_to_arranger=None,
+                       follow_song=None, draw_mode=None, ctrl=None):
+    """Set global song settings."""
+    try:
+        changes = {}
+        if signature_numerator is not None:
+            val = int(signature_numerator)
+            if val < 1 or val > 99:
+                raise ValueError("signature_numerator must be 1-99, got {0}".format(val))
+            song.signature_numerator = val
+            changes["signature_numerator"] = val
+        if signature_denominator is not None:
+            val = int(signature_denominator)
+            if val not in (1, 2, 4, 8, 16):
+                raise ValueError("signature_denominator must be 1, 2, 4, 8, or 16, got {0}".format(val))
+            song.signature_denominator = val
+            changes["signature_denominator"] = val
+        if swing_amount is not None:
+            val = float(swing_amount)
+            if val < 0.0 or val > 1.0:
+                raise ValueError("swing_amount must be 0.0-1.0, got {0}".format(val))
+            song.swing_amount = val
+            changes["swing_amount"] = val
+        if clip_trigger_quantization is not None:
+            song.clip_trigger_quantization = int(clip_trigger_quantization)
+            changes["clip_trigger_quantization"] = int(clip_trigger_quantization)
+        if midi_recording_quantization is not None:
+            song.midi_recording_quantization = int(midi_recording_quantization)
+            changes["midi_recording_quantization"] = int(midi_recording_quantization)
+        if back_to_arranger is not None:
+            song.back_to_arranger = bool(back_to_arranger)
+            changes["back_to_arranger"] = bool(back_to_arranger)
+        if follow_song is not None:
+            song.view.follow_song = bool(follow_song)
+            changes["follow_song"] = bool(follow_song)
+        if draw_mode is not None:
+            song.view.draw_mode = bool(draw_mode)
+            changes["draw_mode"] = bool(draw_mode)
+        if not changes:
+            raise ValueError("No parameters specified")
+        return changes
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting song settings: " + str(e))
+        raise
+
+
+# --- Navigation / Transport actions ---
+
+
+def trigger_session_record(song, record_length=None, ctrl=None):
+    """Trigger a new session recording, optionally with a fixed bar length."""
+    try:
+        if record_length is not None:
+            song.trigger_session_record(float(record_length))
+        else:
+            song.trigger_session_record()
+        return {"triggered": True, "record_length": record_length}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error triggering session record: " + str(e))
+        raise
+
+
+def navigate_playback(song, action, beats=None, ctrl=None):
+    """Navigate playback position: jump_by, scrub_by, or play_selection.
+
+    Args:
+        action: 'jump_by', 'scrub_by', or 'play_selection'
+        beats: Number of beats to jump/scrub (required for jump_by and scrub_by)
+    """
+    try:
+        if action == "jump_by":
+            if beats is None:
+                raise ValueError("beats is required for jump_by")
+            song.jump_by(float(beats))
+            return {"action": "jump_by", "beats": float(beats), "position": song.current_song_time}
+        elif action == "scrub_by":
+            if beats is None:
+                raise ValueError("beats is required for scrub_by")
+            song.scrub_by(float(beats))
+            return {"action": "scrub_by", "beats": float(beats), "position": song.current_song_time}
+        elif action == "play_selection":
+            song.play_selection()
+            return {"action": "play_selection", "position": song.current_song_time}
+        else:
+            raise ValueError("action must be 'jump_by', 'scrub_by', or 'play_selection', got '{0}'".format(action))
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error navigating playback: " + str(e))
+        raise
+
+
+# --- View / Selection ---
+
+
+def select_scene(song, scene_index, ctrl=None):
+    """Select a scene by index in Live's Session view."""
+    try:
+        scenes = list(song.scenes)
+        if scene_index < 0 or scene_index >= len(scenes):
+            raise IndexError("Scene index {0} out of range (have {1} scenes)".format(
+                scene_index, len(scenes)))
+        song.view.selected_scene = scenes[scene_index]
+        return {"selected_scene_index": scene_index, "scene_name": scenes[scene_index].name}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error selecting scene: " + str(e))
+        raise
+
+
+def select_track(song, track_index, track_type="track", ctrl=None):
+    """Select a track by index in Live's Session or Arrangement view.
+
+    Args:
+        track_index: The index of the track.
+        track_type: 'track', 'return', or 'master'.
+    """
+    try:
+        if track_type == "return":
+            tracks = list(song.return_tracks)
+            if track_index < 0 or track_index >= len(tracks):
+                raise IndexError("Return track index {0} out of range".format(track_index))
+            target = tracks[track_index]
+        elif track_type == "master":
+            target = song.master_track
+        else:
+            tracks = list(song.tracks)
+            if track_index < 0 or track_index >= len(tracks):
+                raise IndexError("Track index {0} out of range".format(track_index))
+            target = tracks[track_index]
+        song.view.selected_track = target
+        return {"selected_track": target.name, "track_type": track_type}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error selecting track: " + str(e))
+        raise
+
+
+def set_detail_clip(song, track_index, clip_index, ctrl=None):
+    """Show a clip in Live's Detail view.
+
+    Args:
+        track_index: The track containing the clip.
+        clip_index: The clip slot index.
+    """
+    try:
+        if track_index < 0 or track_index >= len(song.tracks):
+            raise IndexError("Track index out of range")
+        track = song.tracks[track_index]
+        clip_slots = list(track.clip_slots)
+        if clip_index < 0 or clip_index >= len(clip_slots):
+            raise IndexError("Clip index out of range")
+        clip_slot = clip_slots[clip_index]
+        if not clip_slot.has_clip:
+            raise Exception("No clip in slot {0} on track '{1}'".format(clip_index, track.name))
+        song.view.detail_clip = clip_slot.clip
+        return {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "clip_name": clip_slot.clip.name,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting detail clip: " + str(e))
+        raise
+
+
 def set_groove_settings(song, groove_amount=None, groove_index=None,
                          timing_amount=None, quantization_amount=None,
                          random_amount=None, velocity_amount=None, ctrl=None):

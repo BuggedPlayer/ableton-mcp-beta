@@ -4,6 +4,27 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v2.1.0 — 2026-02-10
+
+### New: Song Settings & Navigation (4 tools)
+- `get_song_settings` — read time signature, swing amount, clip trigger quantization, MIDI recording quantization, arrangement overdub, back to arranger, follow song, draw mode
+- `set_song_settings` — set any combination of the above (time signature numerator/denominator, swing 0.0-1.0, quantization values, boolean flags)
+- `trigger_session_record` — start a new session recording, optionally with a fixed bar length
+- `navigate_playback` — jump_by (relative position jump), scrub_by (jump without stopping playback), play_selection (play the current arrangement selection)
+
+### New: View & Selection (3 tools)
+- `select_scene` — programmatically select a scene by index in Session view
+- `select_track` — programmatically select a track (regular, return, or master)
+- `set_detail_clip` — show a specific clip in Live's Detail view (bottom panel)
+
+### New: Transmute Device Controls (2 tools) (Not working already)
+- `get_transmute_properties` — read frequency dial mode, pitch mode, mod mode, mono/poly mode, MIDI gate mode (each with available options list), polyphony, and pitch bend range
+- `set_transmute_properties` — set any combination of Transmute mode indices, polyphony, and pitch bend range
+
+### Total tools: 166 → **175** (+9 new)
+
+---
+
 ## v2.0.2 — 2026-02-10
 
 ### New: Session & Transport (9 tools)
