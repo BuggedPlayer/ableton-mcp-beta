@@ -5,23 +5,39 @@ from __future__ import absolute_import, print_function, unicode_literals
 import traceback
 
 
+_BROWSER_ROOTS = (
+    "instruments", "sounds", "drums", "audio_effects", "midi_effects",
+    "user_library", "user_folders", "samples", "packs", "current_project",
+    "max_for_live", "plugins",
+)
+
+
 def find_browser_item_by_uri(browser_or_item, uri, max_depth=10, current_depth=0, ctrl=None):
-    """Find a browser item by its URI (recursive search)."""
+    """Find a browser item by its URI (recursive search across all categories)."""
     try:
         if hasattr(browser_or_item, "uri") and browser_or_item.uri == uri:
             return browser_or_item
         if current_depth >= max_depth:
             return None
+        # Top-level Browser object — iterate all root categories
         if hasattr(browser_or_item, "instruments"):
-            categories = [
-                browser_or_item.instruments,
-                browser_or_item.sounds,
-                browser_or_item.drums,
-                browser_or_item.audio_effects,
-                browser_or_item.midi_effects,
-            ]
-            for category in categories:
-                item = find_browser_item_by_uri(category, uri, max_depth, current_depth + 1, ctrl)
+            for attr in _BROWSER_ROOTS:
+                root = getattr(browser_or_item, attr, None)
+                if root is None:
+                    continue
+                # user_folders is a list, not a single BrowserItem
+                if attr == "user_folders":
+                    try:
+                        for folder in root:
+                            item = find_browser_item_by_uri(
+                                folder, uri, max_depth, current_depth + 1, ctrl)
+                            if item:
+                                return item
+                    except Exception:
+                        pass
+                    continue
+                item = find_browser_item_by_uri(
+                    root, uri, max_depth, current_depth + 1, ctrl)
                 if item:
                     return item
             return None
@@ -65,17 +81,11 @@ def get_browser_item(song, uri, path, ctrl=None):
             path_parts = path.split("/")
             root = path_parts[0].lower()
             current_item = None
-            if root == "instruments" and hasattr(app.browser, 'instruments'):
-                current_item = app.browser.instruments
-            elif root == "sounds" and hasattr(app.browser, 'sounds'):
-                current_item = app.browser.sounds
-            elif root == "drums" and hasattr(app.browser, 'drums'):
-                current_item = app.browser.drums
-            elif root == "audio_effects" and hasattr(app.browser, 'audio_effects'):
-                current_item = app.browser.audio_effects
-            elif root == "midi_effects" and hasattr(app.browser, 'midi_effects'):
-                current_item = app.browser.midi_effects
-            else:
+            for attr in _BROWSER_ROOTS:
+                if attr == root and hasattr(app.browser, attr):
+                    current_item = getattr(app.browser, attr)
+                    break
+            if current_item is None:
                 current_item = app.browser.instruments
                 path_parts = ["instruments"] + path_parts
 
@@ -148,8 +158,69 @@ def load_instrument_or_effect(song, track_index, uri, ctrl=None):
     return load_browser_item(song, track_index, uri, ctrl)
 
 
+def _find_browser_item_by_name(browser, name, ctrl=None):
+    """Find a loadable browser item by name in user_library and related roots."""
+    name_lower = name.lower()
+    # Strip .mp3/.wav/.aif extension for flexible matching
+    name_stem = name_lower.rsplit(".", 1)[0] if "." in name_lower else name_lower
+
+    def _search(parent, depth=0, max_depth=5):
+        if depth >= max_depth:
+            return None
+        try:
+            children = parent.children
+        except Exception:
+            return None
+        if not children:
+            return None
+        for child in children:
+            child_name = getattr(child, "name", "").lower()
+            if child_name == name_lower or child_name == name_stem:
+                if not hasattr(child, "is_loadable") or child.is_loadable:
+                    return child
+            if hasattr(child, "children") and child.children:
+                found = _search(child, depth + 1, max_depth)
+                if found:
+                    return found
+        return None
+
+    # Search user_library first (most likely location for samples)
+    user_lib = getattr(browser, "user_library", None)
+    if user_lib:
+        found = _search(user_lib)
+        if found:
+            if ctrl:
+                ctrl.log_message("Found '{0}' by name in user_library".format(name))
+            return found
+
+    # Also try user_folders
+    user_folders = getattr(browser, "user_folders", None)
+    if user_folders:
+        try:
+            for folder in user_folders:
+                found = _search(folder)
+                if found:
+                    if ctrl:
+                        ctrl.log_message("Found '{0}' by name in user_folders".format(name))
+                    return found
+        except Exception:
+            pass
+
+    # Try current_project and samples
+    for attr in ("current_project", "samples"):
+        root = getattr(browser, attr, None)
+        if root:
+            found = _search(root)
+            if found:
+                if ctrl:
+                    ctrl.log_message("Found '{0}' by name in {1}".format(name, attr))
+                return found
+
+    return None
+
+
 def load_sample(song, track_index, sample_uri, ctrl=None):
-    """Load a sample onto a track using its browser URI."""
+    """Load a sample onto a track by URI or filename (with name-based fallback)."""
     try:
         if track_index < 0 or track_index >= len(song.tracks):
             raise IndexError("Track index out of range")
@@ -158,9 +229,24 @@ def load_sample(song, track_index, sample_uri, ctrl=None):
             raise RuntimeError("load_sample requires ctrl for application()")
         app = ctrl.application()
 
+        # Strategy 1: exact URI match
         item = find_browser_item_by_uri(app.browser, sample_uri, ctrl=ctrl)
+
+        # Strategy 2: name-based search (extract filename from URI or use as-is)
         if not item:
-            raise ValueError("Sample with URI '{0}' not found".format(sample_uri))
+            if ":" in sample_uri:
+                name = sample_uri.split(":")[-1].strip()
+            else:
+                name = sample_uri.strip()
+            if name:
+                if ctrl:
+                    ctrl.log_message(
+                        "URI match failed for '{0}', trying name search for '{1}'".format(
+                            sample_uri, name))
+                item = _find_browser_item_by_name(app.browser, name, ctrl=ctrl)
+
+        if not item:
+            raise ValueError("Sample '{0}' not found in browser".format(sample_uri))
         if hasattr(item, 'is_loadable') and not item.is_loadable:
             raise ValueError(
                 "Sample item '{0}' (URI: {1}) is not loadable".format(item.name, sample_uri))
@@ -172,7 +258,7 @@ def load_sample(song, track_index, sample_uri, ctrl=None):
             "loaded": True,
             "item_name": item.name,
             "track_name": track.name,
-            "uri": sample_uri,
+            "uri": getattr(item, "uri", sample_uri),
         }
     except Exception as e:
         if ctrl:
@@ -402,23 +488,23 @@ def search_browser(song, query, category, ctrl=None):
                     for child in children:
                         search_item(child, depth + 1, max_depth)
 
-        _categories = {
-            "instruments": "instruments",
-            "sounds": "sounds",
-            "drums": "drums",
-            "audio_effects": "audio_effects",
-            "midi_effects": "midi_effects",
-        }
-        if category == "all":
-            for attr_name in _categories.values():
-                if hasattr(app.browser, attr_name):
-                    search_item(getattr(app.browser, attr_name))
-        elif category in _categories and hasattr(app.browser, _categories[category]):
-            search_item(getattr(app.browser, _categories[category]))
+        if category == "all" or category not in _BROWSER_ROOTS:
+            for attr in _BROWSER_ROOTS:
+                if attr == "user_folders":
+                    # user_folders is a list of BrowserItems, not a single root
+                    try:
+                        for folder in getattr(app.browser, "user_folders", []):
+                            search_item(folder)
+                    except Exception:
+                        pass
+                    continue
+                root = getattr(app.browser, attr, None)
+                if root is not None:
+                    search_item(root)
         else:
-            for attr_name in _categories.values():
-                if hasattr(app.browser, attr_name):
-                    search_item(getattr(app.browser, attr_name))
+            root = getattr(app.browser, category, None)
+            if root is not None:
+                search_item(root)
 
         return {
             "query": query,

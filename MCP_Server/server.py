@@ -3168,24 +3168,105 @@ def get_user_folders(ctx: Context) -> str:
     result = ableton.send_command("get_user_folders")
     return json.dumps(result)
 
+def _resolve_sample_uri(uri_or_name: str) -> str:
+    """Resolve a sample filename, query:UserLibrary URI, or LOM URI.
+
+    Handles three input formats:
+    1. ``query:UserLibrary#subfolder:filename.mp3`` — extracts filename, searches cache/live
+    2. Real LOM URI (contains ':' but not 'query:') — returned as-is
+    3. Plain filename or substring — searched in cache then live User Library
+    """
+    filename: str = ""  # set when parsing query: format
+
+    # --- Handle query:UserLibrary#subfolder:filename format ---
+    if uri_or_name.startswith("query:"):
+        # "query:UserLibrary#eleven_labs_audio:filename.mp3" → filename = "filename.mp3"
+        parts = uri_or_name.split(":")
+        filename = parts[-1].strip() if len(parts) >= 3 else ""
+        if filename:
+            filename_lower = filename.lower()
+            with _browser_cache_lock:
+                snapshot = list(_browser_cache_flat)
+            # exact name match
+            for item in snapshot:
+                if item.get("search_name") == filename_lower and item.get("uri"):
+                    logger.info("Resolved query URI '%s' to '%s'", uri_or_name, item["uri"])
+                    return item["uri"]
+            # substring fallback
+            for item in snapshot:
+                if filename_lower in item.get("search_name", "") and item.get("uri"):
+                    logger.info("Resolved query URI '%s' to '%s' (substring)", uri_or_name, item["uri"])
+                    return item["uri"]
+        # Not in cache — fall through to live lookup below
+
+    # --- Already a real LOM URI (has ":" but not "query:") ---
+    if (":" in uri_or_name or "#" in uri_or_name) and not uri_or_name.startswith("query:"):
+        return uri_or_name
+
+    # --- Plain filename: search cache ---
+    name_lower = (filename or uri_or_name).strip().lower()
+    with _browser_cache_lock:
+        snapshot = list(_browser_cache_flat)
+    # exact match
+    for item in snapshot:
+        if item.get("search_name") == name_lower and item.get("is_loadable") and item.get("uri"):
+            logger.info("Resolved sample name '%s' to URI '%s'", uri_or_name, item["uri"])
+            return item["uri"]
+    # substring match
+    for item in snapshot:
+        sn = item.get("search_name", "")
+        if name_lower in sn and item.get("is_loadable") and item.get("uri"):
+            logger.info("Resolved sample name '%s' to URI '%s' (substring)", uri_or_name, item["uri"])
+            return item["uri"]
+
+    # --- Cache miss: live lookup of user_library subfolders ---
+    try:
+        logger.info("Sample '%s' not in cache, trying live User Library lookup", uri_or_name)
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_browser_items_at_path",
+                                      {"path": "user_library"}, timeout=10.0)
+        for sub in result.get("items", []):
+            if sub.get("is_folder"):
+                sub_result = ableton.send_command(
+                    "get_browser_items_at_path",
+                    {"path": "user_library/" + sub["name"]},
+                    timeout=10.0,
+                )
+                for item in sub_result.get("items", []):
+                    item_name = item.get("name", "").lower()
+                    if name_lower in item_name and item.get("uri"):
+                        logger.info("Resolved sample '%s' via live lookup to '%s'",
+                                    uri_or_name, item["uri"])
+                        return item["uri"]
+    except Exception as exc:
+        logger.warning("Live User Library lookup failed: %s", exc)
+
+    logger.warning("Could not resolve sample '%s' to a known URI, passing through as-is", uri_or_name)
+    return uri_or_name
+
+
 @mcp.tool()
 @_tool_handler("loading sample")
 def load_sample(ctx: Context, track_index: int, sample_uri: str) -> str:
     """
     Load an audio sample onto a track from the browser.
 
+    Accepts a full browser URI, a ``query:UserLibrary#...`` style URI, or
+    just a filename (resolved automatically via the browser cache).
+
     Parameters:
     - track_index: The index of the track to load the sample onto
-    - sample_uri: The URI of the sample from the browser (use get_user_library to find URIs)
+    - sample_uri: The URI or filename of the sample (use get_user_library or search_browser to find URIs)
     """
     _validate_index(track_index, "track_index")
+    resolved_uri = _resolve_sample_uri(sample_uri)
     ableton = get_ableton_connection()
     result = ableton.send_command("load_sample", {
         "track_index": track_index,
-        "sample_uri": sample_uri
+        "sample_uri": resolved_uri
     })
     if result.get("loaded", False):
-        return f"Loaded sample '{result.get('sample_name', 'unknown')}' onto track {track_index}"
+        return f"Loaded sample '{result.get('item_name', result.get('sample_name', 'unknown'))}' onto track {track_index}"
     return f"Failed to load sample"
 
 @mcp.tool()
