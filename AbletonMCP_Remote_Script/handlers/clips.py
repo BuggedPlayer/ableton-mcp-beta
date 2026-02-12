@@ -2,6 +2,8 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+import collections.abc
+
 
 def create_clip(song, track_index, clip_index, length, ctrl=None):
     """Create a new MIDI clip in the specified track and clip slot."""
@@ -487,10 +489,8 @@ def set_clip_launch_mode(song, track_index, clip_index, launch_mode, ctrl=None):
         clip = _get_clip(song, track_index, clip_index)
         launch_mode = int(launch_mode)
         if launch_mode < 0 or launch_mode > 3:
-            msg = "launch_mode must be 0-3 (trigger/gate/toggle/repeat), got {0}".format(launch_mode)
-            if ctrl:
-                ctrl.log_message(msg)
-            raise ValueError(msg)
+            raise ValueError(
+                "launch_mode must be 0-3 (trigger/gate/toggle/repeat), got {0}".format(launch_mode))
         clip.launch_mode = launch_mode
         return {
             "launch_mode": clip.launch_mode,
@@ -697,14 +697,7 @@ def get_warp_markers(song, track_index, clip_index, ctrl=None):
         markers = []
         try:
             wm = clip.warp_markers
-            if isinstance(wm, list):
-                for i, m in enumerate(wm):
-                    markers.append({
-                        "index": i,
-                        "beat_time": m.beat_time,
-                        "sample_time": m.sample_time,
-                    })
-            elif isinstance(wm, dict):
+            if isinstance(wm, dict):
                 # LOM returns dict format
                 wm_list = wm.get("warp_markers", [])
                 for i, m in enumerate(wm_list):
@@ -720,6 +713,17 @@ def get_warp_markers(song, track_index, clip_index, ctrl=None):
                             "beat_time": getattr(m, "beat_time", 0.0),
                             "sample_time": getattr(m, "sample_time", 0.0),
                         })
+            elif isinstance(wm, collections.abc.Iterable) and not isinstance(wm, (str, bytes)):
+                for i, m in enumerate(wm):
+                    markers.append({
+                        "index": i,
+                        "beat_time": getattr(m, "beat_time", 0.0),
+                        "sample_time": getattr(m, "sample_time", 0.0),
+                    })
+            else:
+                if ctrl:
+                    ctrl.log_message(
+                        "Unexpected warp_markers type: {0}".format(type(wm).__name__))
         except Exception as e:
             if ctrl:
                 ctrl.log_message("Error reading warp markers: " + str(e))

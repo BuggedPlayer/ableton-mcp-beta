@@ -12,6 +12,7 @@ _BROWSER_ROOTS = (
 )
 
 _MAX_CHILDREN = 200  # cap per-folder iteration to avoid hanging on huge directories
+_MAX_SEARCH_RESULTS = 50  # stop traversal once we have enough matches
 
 
 def find_browser_item_by_uri(browser_or_item, uri, max_depth=10, current_depth=0, ctrl=None):
@@ -92,8 +93,12 @@ def get_browser_item(song, uri, path, ctrl=None):
                     current_item = getattr(app.browser, attr)
                     break
             if current_item is None:
-                current_item = app.browser.instruments
-                path_parts = ["instruments"] + path_parts
+                msg = "Unrecognized browser root '{0}'. Valid roots: {1}".format(
+                    root, ", ".join("'{0}'".format(r) for r in _BROWSER_ROOTS))
+                if ctrl:
+                    ctrl.log_message(msg)
+                result["error"] = msg
+                return result
 
             for i in range(1, len(path_parts)):
                 part = path_parts[i]
@@ -485,6 +490,8 @@ def search_browser(song, query, category, ctrl=None):
         query_lower = query.lower()
 
         def search_item(item, depth=0, max_depth=5):
+            if len(results) >= _MAX_SEARCH_RESULTS:
+                return
             if depth >= max_depth:
                 return
             if not item:
@@ -513,9 +520,13 @@ def search_browser(song, query, category, ctrl=None):
 
         if category == "all":
             for attr in _BROWSER_ROOTS:
+                if len(results) >= _MAX_SEARCH_RESULTS:
+                    break
                 if attr == "user_folders":
                     try:
                         for folder in getattr(app.browser, "user_folders", []):
+                            if len(results) >= _MAX_SEARCH_RESULTS:
+                                break
                             search_item(folder)
                     except Exception:
                         pass
@@ -527,6 +538,8 @@ def search_browser(song, query, category, ctrl=None):
             if category == "user_folders":
                 try:
                     for folder in getattr(app.browser, "user_folders", []):
+                        if len(results) >= _MAX_SEARCH_RESULTS:
+                            break
                         search_item(folder)
                 except Exception:
                     pass
@@ -637,7 +650,7 @@ def preview_browser_item(song, uri=None, action="preview", ctrl=None):
                 raise ValueError("uri is required for preview action")
             item = find_browser_item_by_uri(browser, uri, ctrl=ctrl)
             if item is None:
-                raise Exception("Browser item not found for URI: {0}".format(uri))
+                raise ValueError("Browser item not found for URI: {0}".format(uri))
             browser.preview_item(item)
             return {
                 "action": "preview",
