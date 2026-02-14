@@ -12,9 +12,9 @@ def get_clip_notes(song, track_index, clip_index, start_time, time_span, start_p
     try:
         clip = _get_midi_clip(song, track_index, clip_index)
 
-        # If time_span is 0, use entire clip length
+        # If time_span is 0, use entire clip length (+1 to include boundary notes)
         if time_span == 0.0:
-            time_span = clip.length
+            time_span = clip.length + 1
 
         # API: get_notes(start_time, start_pitch, time_span, pitch_span)
         notes_tuple = clip.get_notes(start_time, start_pitch, time_span, pitch_span)
@@ -207,8 +207,8 @@ def remove_notes_range(song, track_index, clip_index, from_time, time_span, from
     try:
         clip = _get_midi_clip(song, track_index, clip_index)
 
-        # Count notes before removal
-        actual_time_span = time_span if time_span > 0 else clip.length
+        # Count notes before removal (+1 to include boundary notes)
+        actual_time_span = time_span if time_span > 0 else clip.length + 1
         before = clip.get_notes(from_time, from_pitch, actual_time_span, pitch_span)
         count_before = len(before)
 
