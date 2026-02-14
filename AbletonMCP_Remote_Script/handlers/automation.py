@@ -232,7 +232,13 @@ def create_track_automation(song, track_index, parameter_name, automation_points
 
         # Determine the time span the caller wants to automate
         times = [float(p["time"]) for p in automation_points]
-        t_min = min(times) if times else 0.0
+        if not times:
+            return {
+                "parameter": parameter_name,
+                "track_index": track_index,
+                "points_added": 0,
+            }
+        t_min = min(times)
 
         # Pick the first arrangement clip whose range covers t_min
         target_clip = None

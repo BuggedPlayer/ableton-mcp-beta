@@ -145,7 +145,7 @@ def get_notes_extended(song, track_index, clip_index, start_time, time_span, ctr
     """Get MIDI notes with Live 11+ extended properties."""
     try:
         clip = _get_midi_clip(song, track_index, clip_index)
-        actual_time_span = time_span if time_span > 0 else clip.length
+        actual_time_span = time_span if time_span > 0 else clip.length + 1
 
         # Try Live 11+ get_notes_extended
         if hasattr(clip, 'get_notes_extended'):
@@ -241,10 +241,11 @@ def clear_clip_notes(song, track_index, clip_index, ctrl=None):
         notes_count = len(notes_before)
 
         # Remove all notes -- try Live 11+ API first, fall back to legacy
+        # Use clip.length + 1 to include notes starting exactly at clip.length
         if hasattr(clip, 'remove_notes_extended'):
-            clip.remove_notes_extended(0, 128, 0, clip.length)
+            clip.remove_notes_extended(0, 128, 0, clip.length + 1)
         else:
-            clip.remove_notes(0, 0, clip.length, 128)
+            clip.remove_notes(0, 0, clip.length + 1, 128)
 
         return {
             "cleared": True,

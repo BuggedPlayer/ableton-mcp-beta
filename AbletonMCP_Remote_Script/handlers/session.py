@@ -698,13 +698,25 @@ def set_groove_settings(song, groove_amount=None, groove_index=None,
                     groove_index, len(grooves)))
             groove = grooves[groove_index]
             if timing_amount is not None:
-                groove.timing_amount = float(timing_amount)
+                val = float(timing_amount)
+                if val < 0.0 or val > 1.0:
+                    raise ValueError("timing_amount must be 0.0-1.0, got {0}".format(val))
+                groove.timing_amount = val
             if quantization_amount is not None:
-                groove.quantization_amount = float(quantization_amount)
+                val = float(quantization_amount)
+                if val < 0.0 or val > 1.0:
+                    raise ValueError("quantization_amount must be 0.0-1.0, got {0}".format(val))
+                groove.quantization_amount = val
             if random_amount is not None:
-                groove.random_amount = float(random_amount)
+                val = float(random_amount)
+                if val < 0.0 or val > 1.0:
+                    raise ValueError("random_amount must be 0.0-1.0, got {0}".format(val))
+                groove.random_amount = val
             if velocity_amount is not None:
-                groove.velocity_amount = float(velocity_amount)
+                val = float(velocity_amount)
+                if val < -1.0 or val > 1.0:
+                    raise ValueError("velocity_amount must be -1.0-1.0, got {0}".format(val))
+                groove.velocity_amount = val
             result["groove_index"] = groove_index
             result["groove_name"] = getattr(groove, "name", "")
             result["timing_amount"] = groove.timing_amount
